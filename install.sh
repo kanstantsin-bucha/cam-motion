@@ -64,7 +64,7 @@ cp "${SCRIPT_DIR}/cam_notifier.py" /usr/local/bin/cam_notifier.py
 chmod +x /usr/local/bin/cam_notifier.py
 
 # ---------------------------------------------------------------------------
-# 7. Create NAS mount point with motion:motion ownership
+# 7. Create NAS mount point
 # ---------------------------------------------------------------------------
 echo "==> Creating NAS mount point: ${MOUNT_POINT}"
 mkdir -p "${MOUNT_POINT}"
