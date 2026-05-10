@@ -1,0 +1,15 @@
+[Unit]
+Description=OpenSecurityCam motion detection service
+After=network.target remote-fs.target
+Requires=remote-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/motion -c /etc/cam_motion/motion.conf -n
+Restart=on-failure
+RestartSec=5
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=multi-user.target
