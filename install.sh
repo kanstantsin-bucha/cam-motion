@@ -15,13 +15,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ---------------------------------------------------------------------------
 echo "==> Installing motion"
 apt-get update -qq
-apt-get install -y motion
+DEBIAN_FRONTEND=noninteractive apt-get install -y motion
+id motion &>/dev/null || { echo "ERROR: 'motion' user not found after install"; exit 1; }
 
 # ---------------------------------------------------------------------------
 # 2. Install uv to /usr/local/bin
 # ---------------------------------------------------------------------------
 echo "==> Installing uv"
 curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh
+export PATH="/usr/local/bin:${PATH}"
 
 # ---------------------------------------------------------------------------
 # 3. Install Python 3.11 via uv
@@ -36,11 +38,13 @@ echo "==> Creating config directory"
 mkdir -p /etc/cam_motion
 
 echo "==> Reading camera name from config.toml"
-CAMERA_NAME=$(uv run python3 -c "import tomllib; c=tomllib.load(open('${SCRIPT_DIR}/config.toml','rb')); print(c['camera']['name'])")
+CAMERA_NAME=$(TOML_PATH="${SCRIPT_DIR}/config.toml" uv run --python 3.11 --no-project python3 -c \
+  "import os, tomllib; c=tomllib.load(open(os.environ['TOML_PATH'],'rb')); print(c['camera']['name'])")
 echo "  Camera name: ${CAMERA_NAME}"
 
 echo "==> Installing motion.conf (substituting camera name)"
-sed "s/CAMERA_NAME/${CAMERA_NAME}/g" "${SCRIPT_DIR}/motion.conf" > /etc/cam_motion/motion.conf
+SAFE_NAME=$(printf '%s\n' "${CAMERA_NAME}" | sed 's/[&|/\]/\\&/g')
+sed "s|CAMERA_NAME|${SAFE_NAME}|g" "${SCRIPT_DIR}/motion.conf" > /etc/cam_motion/motion.conf
 
 echo "==> Installing config.toml"
 cp "${SCRIPT_DIR}/config.toml" /etc/cam_motion/config.toml
@@ -64,7 +68,8 @@ chmod +x /usr/local/bin/cam_notifier.py
 # ---------------------------------------------------------------------------
 echo "==> Creating NAS mount point: ${MOUNT_POINT}"
 mkdir -p "${MOUNT_POINT}"
-chown motion:motion "${MOUNT_POINT}"
+# Note: do NOT chown the local mount point — the NFS/SMB mount overlays it.
+# Write access must be configured on the NAS side via export options or share permissions.
 
 # ---------------------------------------------------------------------------
 # 8. Add fstab entry and mount
@@ -87,7 +92,9 @@ else
 fi
 
 echo "==> Mounting NAS"
-mount "${MOUNT_POINT}" || echo "  Warning: mount failed — verify NAS is reachable and fstab entry is correct"
+mountpoint -q "${MOUNT_POINT}" \
+    || mount "${MOUNT_POINT}" \
+    || echo "  Warning: mount failed — verify NAS is reachable and fstab entry is correct"
 
 # ---------------------------------------------------------------------------
 # 9. Install and enable systemd service
@@ -96,7 +103,9 @@ echo "==> Installing systemd service"
 cp "${SCRIPT_DIR}/opensecuritycam.service" /etc/systemd/system/opensecuritycam.service
 systemctl daemon-reload
 systemctl enable opensecuritycam
-systemctl start opensecuritycam
+systemctl is-active --quiet opensecuritycam \
+    && systemctl restart opensecuritycam \
+    || systemctl start opensecuritycam
 
 echo ""
 echo "==> Done. Service status:"
