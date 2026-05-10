@@ -7,11 +7,13 @@ Complete step-by-step guide from a blank SD card to a running security camera.
 ## What You Need
 
 **Hardware**
-- Raspberry Pi 4 or 5 nano (2GB RAM minimum)
+- Raspberry Pi 4 or 5 (2 GB RAM minimum recommended) — or Raspberry Pi Zero 2 W for a budget build (see note below)
 - Pi Camera Module (v2, v3, or HQ) with CSI ribbon cable
 - microSD card (16 GB+, Class 10 or faster)
-- Power supply (official micro-USB for nano adapter recommended)
+- Power supply (official USB-C for Pi 4/5, micro-USB for Zero 2 W)
 - NAS with an NFS or SMB/CIFS share
+
+> **Pi Zero 2 W:** fully supported, but edit `motion.conf` before running the installer — set `width 640`, `height 480`, `framerate 5`, and leave `minimum_frame_time 2` (the default). This keeps CPU usage manageable on the quad-core 512 MB board.
 
 **On your computer**
 - [Raspberry Pi Imager](https://www.raspberrypi.com/software/) (free download)
@@ -190,6 +192,8 @@ The defaults are conservative and work for most indoor environments. You can adj
 | `noise_level` | 32 | Higher = ignores more background noise |
 | `minimum_motion_frames` | 2 | Higher = requires more sustained motion |
 | `event_gap` | 60 | Seconds of calm before a new event starts |
+| `framerate` | 15 | Frames captured and checked per second; lower values reduce CPU load and recording smoothness |
+| `minimum_frame_time` | 2 | Minimum seconds between processed frames — on a Pi Zero 2 W this effectively throttles detection to once every 2 s, keeping CPU comfortable without lowering `framerate` further |
 
 ---
 

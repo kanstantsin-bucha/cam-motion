@@ -19,13 +19,15 @@ An open source motion detection security camera built on open hardware. Runs on 
 
 ## Hardware
 
-| Component | Recommended |
-|---|---|
-| Board | Raspberry Pi 4 or 5 nano (2 GB RAM+) |
-| Camera | Pi Camera Module v2 / v3 / HQ (CSI ribbon: Standard - Mini) |
-| Storage | microSD 16 GB+ (Class 10 or faster) |
-| OS | Raspberry Pi OS Lite 64-bit (Bookworm) |
-| Network storage | Any NAS with NFS or SMB/CIFS share |
+| Component | Recommended | Budget / minimal |
+|---|---|---|
+| Board | Raspberry Pi 4 or 5 (2 GB RAM+) | Raspberry Pi Zero 2 W |
+| Camera | Pi Camera Module v2 / v3 / HQ (CSI ribbon: Standard - Mini) | same |
+| Storage | microSD 16 GB+ (Class 10 or faster) | same |
+| OS | Raspberry Pi OS Lite 64-bit (Bookworm) | same |
+| Network storage | Any NAS with NFS or SMB/CIFS share | same |
+
+> **Pi Zero 2 W note:** works, but tune `motion.conf` for its single 512 MB RAM constraint — drop to `width 640` / `height 480`, lower `framerate`, and set `minimum_frame_time` to reduce CPU load (see Configuration below).
 
 All hardware is off-the-shelf and widely available. No soldering required.
 
@@ -102,7 +104,8 @@ timeout_seconds = 5
 | `minimum_motion_frames` | 2 | Consecutive frames required to confirm motion |
 | `event_gap` | 60 | Seconds of calm before a new event starts |
 | `width` / `height` | 1280×720 | Recording resolution |
-| `framerate` | 15 | Frames per second |
+| `framerate` | 15 | Frames captured and checked per second — lower values reduce CPU load but also reduce recording smoothness |
+| `minimum_frame_time` | 2 | Minimum seconds between processed frames, regardless of `framerate` — use this to check e.g. once every 2 s on low-power boards like the Zero 2 W |
 
 ---
 
