@@ -1,0 +1,6 @@
+[camera]
+name = "front-door"
+
+[webhook]
+url = "http://nas-host/api/motion"
+timeout_seconds = 5
