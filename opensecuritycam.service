@@ -7,6 +7,7 @@ Requires=remote-fs.target
 Type=simple
 User=motion
 Group=motion
+Environment=UV_PYTHON_INSTALL_DIR=/usr/local/share/uv-python
 ExecStart=/usr/bin/motion -c /etc/cam_motion/motion.conf -n
 Restart=on-failure
 RestartSec=5

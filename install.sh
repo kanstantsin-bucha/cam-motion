@@ -15,7 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ---------------------------------------------------------------------------
 echo "==> Installing motion"
 apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y motion
+DEBIAN_FRONTEND=noninteractive apt-get install -y motion nfs-common cifs-utils
 id motion &>/dev/null || { echo "ERROR: 'motion' user not found after install"; exit 1; }
 
 # ---------------------------------------------------------------------------
@@ -24,6 +24,7 @@ id motion &>/dev/null || { echo "ERROR: 'motion' user not found after install"; 
 echo "==> Installing uv"
 curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh
 export PATH="/usr/local/bin:${PATH}"
+export UV_PYTHON_INSTALL_DIR=/usr/local/share/uv-python
 
 # ---------------------------------------------------------------------------
 # 3. Install Python 3.11 via uv
@@ -75,21 +76,21 @@ mkdir -p "${MOUNT_POINT}"
 # 8. Add fstab entry and mount
 # ---------------------------------------------------------------------------
 echo "==> Adding NAS mount to /etc/fstab"
+MOTION_UID=$(id -u motion)
+MOTION_GID=$(id -g motion)
 if [ "${NAS_TYPE}" = "nfs" ]; then
     FSTAB_ENTRY="${NAS_HOST}:${NAS_SHARE} ${MOUNT_POINT} nfs defaults,_netdev,auto 0 0"
 elif [ "${NAS_TYPE}" = "smb" ]; then
-    FSTAB_ENTRY="//${NAS_HOST}${NAS_SHARE} ${MOUNT_POINT} cifs defaults,_netdev,auto 0 0"
+    FSTAB_ENTRY="//${NAS_HOST}${NAS_SHARE} ${MOUNT_POINT} cifs uid=${MOTION_UID},gid=${MOTION_GID},_netdev,auto 0 0"
 else
     echo "  ERROR: NAS_TYPE must be 'nfs' or 'smb'"
     exit 1
 fi
 
-if grep -qF "${MOUNT_POINT}" /etc/fstab; then
-    echo "  fstab entry already exists, skipping"
-else
-    echo "${FSTAB_ENTRY}" >> /etc/fstab
-    echo "  Added: ${FSTAB_ENTRY}"
-fi
+# Remove any existing entry for this mount point, then write the current one
+sed -i "\|${MOUNT_POINT}|d" /etc/fstab
+echo "${FSTAB_ENTRY}" >> /etc/fstab
+echo "  Written: ${FSTAB_ENTRY}"
 
 echo "==> Mounting NAS"
 mountpoint -q "${MOUNT_POINT}" \
