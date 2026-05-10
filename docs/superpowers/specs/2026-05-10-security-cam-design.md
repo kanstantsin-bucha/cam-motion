@@ -17,7 +17,7 @@ Pi Camera (CSI)
 
 Two components:
 
-1. **`motion` daemon** — detects motion, records 1-minute H.264/MP4 clips to the NAS mount. Runs as a systemd service (`opensecuritycam.service`).
+1. **`cam_motion` daemon** — detects motion, records 1-minute H.264/MP4 clips to the NAS mount. Runs as a systemd service (`opensecuritycam.service`).
 2. **`cam_notifier.py`** — invoked by `motion`'s `on_movie_start` hook at the start of each new clip. Reads `config.toml` and POSTs a JSON payload to the configured webhook URL immediately.
 
 ## motion Configuration (`/etc/cam_motion/motion.conf`)
@@ -27,7 +27,7 @@ Key settings:
 - **Camera backend**: `v4l2` (`/dev/video0` — Pi CSI camera via libcamera/v4l2 bridge)
 - **Resolution**: configurable (default 1280x720)
 - **Framerate**: configurable (default 15fps)
-- **Output path**: NAS mount, e.g. `/mnt/nas/security-cam/<camera-name>/`
+- **Output path**: NAS mount, e.g. `/mnt/nas/security-cam/`
 - **Clip length**: `max_movie_time 60` — new file every 60 seconds while motion persists
 - **File naming**: `%Y%m%d-%H%M%S-<camera-name>.mp4`
 - **Hook**: `on_movie_start /path/to/cam_notifier.py %f %t %v`
@@ -65,7 +65,7 @@ timeout_seconds = 5
   "camera": "front-door",
   "timestamp": "2026-05-10T14:32:00Z",
   "sequence": 3,
-  "clip": "/mnt/nas/security-cam/front-door/20260510-143200-front-door.mp4"
+  "clip": "20260510-143200-front-door.mp4"
 }
 ```
 
