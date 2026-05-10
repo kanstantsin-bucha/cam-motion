@@ -7,10 +7,10 @@ Complete step-by-step guide from a blank SD card to a running security camera.
 ## What You Need
 
 **Hardware**
-- Raspberry Pi 4 or 5 (2GB RAM minimum)
+- Raspberry Pi 4 or 5 nano (2GB RAM minimum)
 - Pi Camera Module (v2, v3, or HQ) with CSI ribbon cable
 - microSD card (16 GB+, Class 10 or faster)
-- Power supply (official Pi USB-C adapter recommended)
+- Power supply (official micro-USB for nano adapter recommended)
 - NAS with an NFS or SMB/CIFS share
 
 **On your computer**
@@ -32,7 +32,7 @@ Complete step-by-step guide from a blank SD card to a running security camera.
 
    | Setting | Value |
    |---|---|
-   | Hostname | `cam-pi` (or any name you like) |
+   | Hostname | `camera1` (becomes `camera1.local` on your network — use a unique name per camera) |
    | Username | `pi` |
    | Password | a strong password |
    | WiFi SSID/password | your network credentials (if using WiFi) |
@@ -55,17 +55,42 @@ Complete step-by-step guide from a blank SD card to a running security camera.
 
 ## Step 3 — SSH Into the Pi
 
-From your computer:
+From your computer (replace `camera1` with the hostname you set in Step 1):
 
 ```bash
-ssh pi@cam-pi.local
+ssh pi@camera1.local
 ```
 
-If `cam-pi.local` doesn't resolve, find the Pi's IP from your router's DHCP list and use that instead:
+If `camera1.local` doesn't resolve, find the Pi's IP from your router's DHCP list and use that instead:
 
 ```bash
 ssh pi@192.168.1.x
 ```
+
+---
+
+## Step 3.5 — Rename the Camera (mDNS Name)
+
+Each camera must have a unique hostname so you can reach it at `<hostname>.local` on your network. If you set the hostname correctly in Step 1, skip this step. If you need to rename a running Pi:
+
+```bash
+# Set the new hostname (e.g. camera1, camera2, front-door, garage)
+sudo hostnamectl set-hostname camera1
+
+# Update /etc/hosts so the Pi can resolve its own name
+sudo sed -i "s/$(hostname)/camera1/g" /etc/hosts
+
+# Restart the mDNS daemon to advertise the new name
+sudo systemctl restart avahi-daemon
+```
+
+After this, you can SSH using the new name:
+
+```bash
+ssh pi@camera1.local
+```
+
+> **Multiple cameras:** give each Pi a distinct hostname (`camera1`, `camera2`, `front-door`, `garage`, etc.) and set the matching `name` in `config.toml` so webhook payloads and clip filenames are unambiguous.
 
 ---
 

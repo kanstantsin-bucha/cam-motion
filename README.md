@@ -21,8 +21,8 @@ An open source motion detection security camera built on open hardware. Runs on 
 
 | Component | Recommended |
 |---|---|
-| Board | Raspberry Pi 4 or 5 (2 GB RAM+) |
-| Camera | Pi Camera Module v2 / v3 / HQ (CSI ribbon) |
+| Board | Raspberry Pi 4 or 5 nano (2 GB RAM+) |
+| Camera | Pi Camera Module v2 / v3 / HQ (CSI ribbon: Standard - Mini) |
 | Storage | microSD 16 GB+ (Class 10 or faster) |
 | OS | Raspberry Pi OS Lite 64-bit (Bookworm) |
 | Network storage | Any NAS with NFS or SMB/CIFS share |
