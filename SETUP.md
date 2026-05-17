@@ -199,7 +199,7 @@ The defaults are conservative and work for most indoor environments. You can adj
 
 ## Step 9 — Run the Installer
 
-The installer requires root and three environment variables for your NAS:
+The installer requires root and environment variables for your NAS:
 
 ```bash
 # For NFS:
@@ -208,53 +208,36 @@ sudo NAS_HOST=192.168.1.x \
      NAS_TYPE=nfs \
      bash install.sh
 
-# For SMB/CIFS:
-sudo NAS_HOST=192.168.0.184 \
+# For SMB/CIFS (no password):
+sudo NAS_HOST=192.168.1.x \
      NAS_SHARE=/NAS \
      NAS_TYPE=smb \
      bash install.sh
+
+# For SMB/CIFS (password-protected share):
+sudo NAS_HOST=192.168.1.x \
+     NAS_SHARE=/NAS \
+     NAS_TYPE=smb \
+     SMB_USER=your-nas-user \
+     SMB_PASS=your-nas-password \
+     bash install.sh
 ```
+
+When `SMB_USER` and `SMB_PASS` are provided the installer automatically writes `/etc/cam_motion/smb-credentials` (mode 600) and wires it into the fstab entry.
 
 The installer does the following automatically:
 
 | Step | What happens |
 |---|---|
-| 1 | Installs `motion`, `nfs-common`, `cifs-utils` via apt |
+| 1 | Installs `motion`, `nfs-common`, `cifs-utils`, `v4l-utils` via apt |
 | 2 | Installs `uv` to `/usr/local/bin` |
 | 3 | Installs Python 3.11 via `uv python install 3.11` |
 | 4 | Copies `config.toml` and `motion.conf` to `/etc/cam_motion/` (substituting camera name) |
 | 5 | Creates `/var/log/cam_motion/` owned by `motion` user |
 | 6 | Installs `cam_notifier.py` to `/usr/local/bin/` |
 | 7 | Creates NAS mount point `/mnt/nas/security-cam` |
-| 8 | Adds NAS entry to `/etc/fstab` and mounts it |
+| 8 | Writes SMB credentials file if `SMB_USER`/`SMB_PASS` set; adds NAS entry to `/etc/fstab` and mounts it |
 | 9 | Installs and starts `opensecuritycam` systemd service |
-
-### SMB credentials file (SMB only)
-
-For password-protected SMB shares, create a credentials file after running the installer:
-
-```bash
-sudo nano /etc/cam_motion/smb-credentials
-```
-
-```
-username=your-nas-user
-password=your-nas-password
-```
-
-```bash
-sudo chmod 600 /etc/cam_motion/smb-credentials
-```
-
-Then update the fstab entry to reference it:
-
-```bash
-sudo nano /etc/fstab
-# Change the cifs line to add: credentials=/etc/cam_motion/smb-credentials
-# Example:
-# //192.168.1.x/volume1/security-cam /mnt/nas/security-cam cifs uid=...,gid=...,credentials=/etc/cam_motion/smb-credentials,_netdev,auto 0 0
-sudo mount -a
-```
 
 ---
 

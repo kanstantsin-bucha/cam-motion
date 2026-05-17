@@ -3,9 +3,12 @@ set -euo pipefail
 
 # NAS connection — override via environment variables before running:
 #   NAS_HOST=192.168.1.100 NAS_SHARE=/volume1/security NAS_TYPE=nfs sudo bash install.sh
+#   NAS_HOST=192.168.1.100 NAS_SHARE=/NAS NAS_TYPE=smb SMB_USER=user SMB_PASS=pass sudo bash install.sh
 NAS_HOST="${NAS_HOST:-nas-host}"
 NAS_SHARE="${NAS_SHARE:-/volume1/security-cam}"
 NAS_TYPE="${NAS_TYPE:-nfs}"          # "nfs" or "smb"
+SMB_USER="${SMB_USER:-}"             # SMB only — leave empty to skip credentials file
+SMB_PASS="${SMB_PASS:-}"
 MOUNT_POINT="/mnt/nas/security-cam"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -81,7 +84,16 @@ MOTION_GID=$(id -g motion)
 if [ "${NAS_TYPE}" = "nfs" ]; then
     FSTAB_ENTRY="${NAS_HOST}:${NAS_SHARE} ${MOUNT_POINT} nfs defaults,_netdev,auto 0 0"
 elif [ "${NAS_TYPE}" = "smb" ]; then
-    FSTAB_ENTRY="//${NAS_HOST}${NAS_SHARE} ${MOUNT_POINT} cifs uid=${MOTION_UID},gid=${MOTION_GID},_netdev,auto 0 0"
+    SMB_CREDS_OPT=""
+    if [ -n "${SMB_USER}" ] && [ -n "${SMB_PASS}" ]; then
+        echo "==> Writing SMB credentials file"
+        SMB_CREDS="/etc/cam_motion/smb-credentials"
+        printf 'username=%s\npassword=%s\n' "${SMB_USER}" "${SMB_PASS}" > "${SMB_CREDS}"
+        chmod 600 "${SMB_CREDS}"
+        echo "  Written: ${SMB_CREDS}"
+        SMB_CREDS_OPT=",credentials=${SMB_CREDS}"
+    fi
+    FSTAB_ENTRY="//${NAS_HOST}${NAS_SHARE} ${MOUNT_POINT} cifs uid=${MOTION_UID},gid=${MOTION_GID}${SMB_CREDS_OPT},_netdev,auto 0 0"
 else
     echo "  ERROR: NAS_TYPE must be 'nfs' or 'smb'"
     exit 1
