@@ -191,9 +191,10 @@ The defaults are conservative and work for most indoor environments. You can adj
 | `threshold` | 1500 | Lower = more sensitive to small movements |
 | `noise_level` | 32 | Higher = ignores more background noise |
 | `minimum_motion_frames` | 2 | Higher = requires more sustained motion |
-| `event_gap` | 60 | Seconds of calm before a new event starts |
-| `framerate` | 15 | Frames captured and checked per second; lower values reduce CPU load and recording smoothness |
-| `minimum_frame_time` | 2 | Minimum seconds between processed frames — on a Pi Zero 2 W this effectively throttles detection to once every 2 s, keeping CPU comfortable without lowering `framerate` further |
+| `event_gap` | 10 | Seconds of no motion before the clip is closed and written. Shorter = faster availability on NAS; longer = fewer files when motion is continuous. |
+| `width` / `height` | 640 / 480 | OV5647 supported modes: 640×480, 1296×972, 1920×1080, 2592×1944 — all at up to 30 fps. Higher resolution increases CPU load and clip file size. |
+| `framerate` | 5 | Frames captured per second — controls both detection rate and video smoothness. Use 5 on a Zero 2 W, up to 15 on a Pi 4/5. |
+| `minimum_frame_time` | 0 | Minimum seconds between frame grabs. Throttles the entire capture loop (detection AND video). Leave at 0 and use `framerate` to control rate instead. |
 
 ---
 
@@ -229,15 +230,13 @@ The installer does the following automatically:
 
 | Step | What happens |
 |---|---|
-| 1 | Installs `motion`, `nfs-common`, `cifs-utils` via apt |
-| 2 | Installs `uv` to `/usr/local/bin` |
-| 3 | Installs Python 3.11 via `uv python install 3.11` |
-| 4 | Copies `config.toml` and `motion.conf` to `/etc/cam_motion/` (substituting camera name) |
-| 5 | Creates `/var/log/cam_motion/` owned by `motion` user |
-| 6 | Installs `cam_notifier.py` to `/usr/local/bin/` |
-| 7 | Creates NAS mount point `/mnt/nas/security-cam` |
-| 8 | Writes SMB credentials file if `SMB_USER`/`SMB_PASS` set; adds NAS entry to `/etc/fstab` and mounts it |
-| 9 | Installs and starts `opensecuritycam` systemd service |
+| 1 | Installs `motion`, `nfs-common`, `cifs-utils`, `curl` via apt |
+| 2 | Copies `config.toml` and `motion.conf` to `/etc/cam_motion/` (substituting camera name) |
+| 3 | Creates `/var/log/cam_motion/` owned by `motion` user |
+| 4 | Installs `cam_notifier.sh` to `/usr/local/bin/` |
+| 5 | Creates NAS mount point `/mnt/nas/security-cam` |
+| 6 | Writes SMB credentials file if `SMB_USER`/`SMB_PASS` set; adds NAS entry to `/etc/fstab` and mounts it |
+| 7 | Installs and starts `opensecuritycam` systemd service |
 
 ---
 

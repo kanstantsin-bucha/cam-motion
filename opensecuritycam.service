@@ -7,7 +7,6 @@ Requires=remote-fs.target
 Type=simple
 User=motion
 Group=motion
-Environment=UV_PYTHON_INSTALL_DIR=/usr/local/share/uv-python
 # The OV5647 CSI sensor outputs raw 10-bit Bayer (pGAA).  On kernel 6.12
 # neither motion nor ffmpeg can negotiate this format directly via V4L2.
 # The libcamera V4L2 compat shim intercepts V4L2 ioctls and routes them

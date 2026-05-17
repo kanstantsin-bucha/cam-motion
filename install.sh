@@ -18,32 +18,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ---------------------------------------------------------------------------
 echo "==> Installing motion"
 apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y motion nfs-common cifs-utils
+DEBIAN_FRONTEND=noninteractive apt-get install -y motion nfs-common cifs-utils curl
 id motion &>/dev/null || { echo "ERROR: 'motion' user not found after install"; exit 1; }
 
 # ---------------------------------------------------------------------------
-# 2. Install uv to /usr/local/bin
-# ---------------------------------------------------------------------------
-echo "==> Installing uv"
-curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh
-export PATH="/usr/local/bin:${PATH}"
-export UV_PYTHON_INSTALL_DIR=/usr/local/share/uv-python
-
-# ---------------------------------------------------------------------------
-# 3. Install Python 3.11 via uv
-# ---------------------------------------------------------------------------
-echo "==> Installing Python 3.11 via uv"
-uv python install 3.11
-
-# ---------------------------------------------------------------------------
-# 4. Create /etc/cam_motion/ and populate it
+# 2. Create /etc/cam_motion/ and populate it
 # ---------------------------------------------------------------------------
 echo "==> Creating config directory"
 mkdir -p /etc/cam_motion
 
 echo "==> Reading camera name from config.toml"
-CAMERA_NAME=$(TOML_PATH="${SCRIPT_DIR}/config.toml" uv run --python 3.11 --no-project python3 -c \
-  "import os, tomllib; c=tomllib.load(open(os.environ['TOML_PATH'],'rb')); print(c['camera']['name'])")
+CAMERA_NAME=$(sed -n '/^\[camera\]/,/^\[/{ s/^[[:space:]]*name[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p }' \
+  "${SCRIPT_DIR}/config.toml" | head -1)
+[ -n "${CAMERA_NAME}" ] || { echo "ERROR: could not read camera.name from config.toml"; exit 1; }
 echo "  Camera name: ${CAMERA_NAME}"
 
 echo "==> Installing motion.conf (substituting camera name)"
@@ -54,21 +41,21 @@ echo "==> Installing config.toml"
 cp "${SCRIPT_DIR}/config.toml" /etc/cam_motion/config.toml
 
 # ---------------------------------------------------------------------------
-# 5. Create /var/log/cam_motion/ with motion:motion ownership
+# 3. Create /var/log/cam_motion/ with motion:motion ownership
 # ---------------------------------------------------------------------------
 echo "==> Creating log directory"
 mkdir -p /var/log/cam_motion
 chown motion:motion /var/log/cam_motion
 
 # ---------------------------------------------------------------------------
-# 6. Install cam_notifier.py
+# 4. Install cam_notifier.sh
 # ---------------------------------------------------------------------------
-echo "==> Installing cam_notifier.py"
-cp "${SCRIPT_DIR}/cam_notifier.py" /usr/local/bin/cam_notifier.py
-chmod +x /usr/local/bin/cam_notifier.py
+echo "==> Installing cam_notifier.sh"
+cp "${SCRIPT_DIR}/cam_notifier.sh" /usr/local/bin/cam_notifier.sh
+chmod +x /usr/local/bin/cam_notifier.sh
 
 # ---------------------------------------------------------------------------
-# 7. Create NAS mount point
+# 5. Create NAS mount point
 # ---------------------------------------------------------------------------
 echo "==> Creating NAS mount point: ${MOUNT_POINT}"
 mkdir -p "${MOUNT_POINT}"
@@ -76,7 +63,7 @@ mkdir -p "${MOUNT_POINT}"
 # Write access must be configured on the NAS side via export options or share permissions.
 
 # ---------------------------------------------------------------------------
-# 8. Add fstab entry and mount
+# 6. Add fstab entry and mount
 # ---------------------------------------------------------------------------
 echo "==> Adding NAS mount to /etc/fstab"
 MOTION_UID=$(id -u motion)
@@ -110,7 +97,7 @@ mountpoint -q "${MOUNT_POINT}" \
     || echo "  Warning: mount failed — verify NAS is reachable and fstab entry is correct"
 
 # ---------------------------------------------------------------------------
-# 9. Install and enable systemd service
+# 7. Install and enable systemd service
 # ---------------------------------------------------------------------------
 echo "==> Installing systemd service"
 cp "${SCRIPT_DIR}/opensecuritycam.service" /etc/systemd/system/opensecuritycam.service
