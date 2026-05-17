@@ -8,12 +8,12 @@ Type=simple
 User=motion
 Group=motion
 Environment=UV_PYTHON_INSTALL_DIR=/usr/local/share/uv-python
-# On kernel 6.12 (Debian Trixie) the unicam driver does not propagate the
-# subdev format to the video node automatically — the node resets to Y12 on
-# each boot.  motion will fail VIDIOC_STREAMON unless the correct packed
-# 10-bit Bayer format (pGAA / SGBRG10P) is set first.  The '+' prefix runs
-# this command as root regardless of User= above.
-ExecStartPre=+/usr/bin/v4l2-ctl -d /dev/video0 --set-fmt-video=width=640,height=480,pixelformat=pGAA
+# The OV5647 CSI sensor outputs raw 10-bit Bayer (pGAA).  On kernel 6.12
+# neither motion nor ffmpeg can negotiate this format directly via V4L2.
+# The libcamera V4L2 compat shim intercepts V4L2 ioctls and routes them
+# through the full libcamera pipeline (unicam → ISP), presenting motion
+# with a standard YUV420 stream instead.
+Environment=LD_PRELOAD=/usr/libexec/aarch64-linux-gnu/libcamera/v4l2-compat.so
 ExecStart=/usr/bin/motion -c /etc/cam_motion/motion.conf -n
 Restart=on-failure
 RestartSec=5

@@ -18,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ---------------------------------------------------------------------------
 echo "==> Installing motion"
 apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y motion nfs-common cifs-utils v4l-utils
+DEBIAN_FRONTEND=noninteractive apt-get install -y motion nfs-common cifs-utils
 id motion &>/dev/null || { echo "ERROR: 'motion' user not found after install"; exit 1; }
 
 # ---------------------------------------------------------------------------

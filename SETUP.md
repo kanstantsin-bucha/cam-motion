@@ -229,7 +229,7 @@ The installer does the following automatically:
 
 | Step | What happens |
 |---|---|
-| 1 | Installs `motion`, `nfs-common`, `cifs-utils`, `v4l-utils` via apt |
+| 1 | Installs `motion`, `nfs-common`, `cifs-utils` via apt |
 | 2 | Installs `uv` to `/usr/local/bin` |
 | 3 | Installs Python 3.11 via `uv python install 3.11` |
 | 4 | Copies `config.toml` and `motion.conf` to `/etc/cam_motion/` (substituting camera name) |
@@ -285,31 +285,129 @@ sudo tail /var/log/cam_motion/motion.log
 
 ## Troubleshooting
 
-| Symptom | Check |
+### Quick reference
+
+| Symptom | First check |
 |---|---|
 | Service not starting | `journalctl -u opensecuritycam -n 50` |
-| No `/dev/video0` | Reseat ribbon cable; check `dmesg \| grep video` |
-| NAS mount fails | Verify NAS IP and export/share settings; `sudo mount /mnt/nas/security-cam` manually |
-| No clips recorded | Check `motion.log`; lower `threshold` in `motion.conf`, run `sudo systemctl restart opensecuritycam` |
-| Webhook not firing | Check `notifier.log`; verify webhook URL in `config.toml` |
-| Clips record but webhook fails | Check NAS server is reachable on port 80/443; check `timeout_seconds` |
+| `VIDIOC_STREAMON: Invalid argument` in motion.log | See **Camera / libcamera** section below |
+| No `/dev/video0` | Reseat ribbon cable; `dmesg \| grep -E "csi\|video\|ov5647"` |
+| NAS mount fails | `sudo mount /mnt/nas/security-cam` — check NAS IP and export settings |
+| No clips recorded | Lower `threshold` in `motion.conf`; restart service |
+| Webhook not firing | Check `notifier.log`; verify URL in `config.toml` |
+| Clips record but webhook fails | Check NAS reachable on port 80/443; check `timeout_seconds` |
 
-### Useful commands
+---
+
+### Camera / libcamera
+
+The OV5647 CSI sensor outputs raw 10-bit Bayer (SGBRG10_1X10). On kernel 6.12 the unicam V4L2 node exposes this as format `pGAA` (SGBRG10P). Neither motion nor ffmpeg can negotiate this format directly — both fail with `VIDIOC_STREAMON: Invalid argument`.
+
+The service works around this by LD_PRELOADing the libcamera V4L2 compat shim (`v4l2-compat.so`), which intercepts V4L2 ioctls and routes them through the full libcamera pipeline (unicam → ISP), presenting motion with a standard YUV420 stream.
+
+**Verify libcamera sees the camera:**
 
 ```bash
-# Restart the service after config changes:
-sudo systemctl restart opensecuritycam
+rpicam-hello --list-cameras
+# Expected: ov5647 [2592x1944 10-bit GBRG] with SGBRG10_CSI2P modes
+```
 
-# Watch motion log live:
+**Verify the shim is loaded at runtime:**
+
+```bash
+sudo cat /proc/$(systemctl show -p MainPID --value opensecuritycam)/maps \
+  | grep v4l2-compat
+# Expected: a line containing v4l2-compat.so
+```
+
+**Check what format motion actually negotiated:**
+
+```bash
+sudo grep "pixfmt_set\|pixfmt_select\|STREAMON" /var/log/cam_motion/motion.log | tail -5
+# Healthy: "Using palette YU12 (640x480)"
+# Broken:  "Using palette Y12" followed by "VIDIOC_STREAMON: Invalid argument"
+```
+
+If you see Y12 / STREAMON error, the shim is not loading. Check `journalctl -u opensecuritycam -n 20` for LD_PRELOAD errors and verify the shim path:
+
+```bash
+ls /usr/libexec/aarch64-linux-gnu/libcamera/v4l2-compat.so
+```
+
+---
+
+### Camera diagnostics (install v4l-utils first)
+
+```bash
+sudo apt-get install -y v4l-utils
+```
+
+```bash
+# List all V4L2 devices and their driver:
+v4l2-ctl --list-devices
+
+# Show the current capture format on the raw unicam node:
+sudo v4l2-ctl -d /dev/video0 --get-fmt-video
+
+# Show the media pipeline topology (unicam on /dev/media2):
+sudo media-ctl -d /dev/media2 -p
+
+# Show what format the sensor subdev is configured for:
+sudo v4l2-ctl -d /dev/v4l-subdev0 --get-subdev-fmt
+# Expected: MEDIA_BUS_FMT_SGBRG10_1X10 640x480
+```
+
+---
+
+### NAS
+
+```bash
+# Remount after fstab changes:
+sudo mount -a
+
+# Check what is mounted:
+df -h | grep nas
+
+# List clips on the NAS:
+ls -lh /mnt/nas/security-cam/
+```
+
+---
+
+### Logs
+
+```bash
+# Service startup and crashes:
+journalctl -u opensecuritycam -n 50
+
+# Motion detection log (live):
 sudo tail -f /var/log/cam_motion/motion.log
 
-# Watch notifier log live:
+# Webhook notifier log (live):
 tail -f /var/log/cam_motion/notifier.log
 
-# Test camera preview (requires display or VNC):
-libcamera-hello -t 5000
+# Restart after config changes:
+sudo systemctl restart opensecuritycam
+```
 
-# Test webhook manually:
+---
+
+### Camera preview
+
+```bash
+# Quick sanity check — streams 5 seconds to console (no display needed):
+rpicam-hello -t 5000 --nopreview
+
+# Capture a single JPEG to verify framing and focus:
+rpicam-still -o /tmp/test.jpg && scp pi@camera1.local:/tmp/test.jpg .
+```
+
+---
+
+### Webhook
+
+```bash
+# Send a test event manually:
 curl -X POST http://your-nas/api/motion \
   -H 'Content-Type: application/json' \
   -d '{"camera":"front-door","timestamp":"2026-01-01T00:00:00Z","sequence":1,"clip":"test.mp4"}'
