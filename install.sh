@@ -4,8 +4,8 @@ set -euo pipefail
 # NAS connection — override via environment variables before running:
 #   NAS_HOST=192.168.1.100 NAS_SHARE=/volume1/security NAS_TYPE=nfs sudo bash install.sh
 #   NAS_HOST=192.168.1.100 NAS_SHARE=/NAS NAS_TYPE=smb SMB_USER=user SMB_PASS=pass sudo bash install.sh
-NAS_HOST="${NAS_HOST:-nas-host}"
-NAS_SHARE="${NAS_SHARE:-/volume1/security-cam}"
+NAS_HOST="${NAS_HOST:-}"
+NAS_SHARE="${NAS_SHARE:-}"
 NAS_TYPE="${NAS_TYPE:-nfs}"          # "nfs" or "smb"
 SMB_USER="${SMB_USER:-}"             # SMB only — leave empty to skip credentials file
 SMB_PASS="${SMB_PASS:-}"
@@ -65,36 +65,40 @@ mkdir -p "${MOUNT_POINT}"
 # ---------------------------------------------------------------------------
 # 6. Add fstab entry and mount
 # ---------------------------------------------------------------------------
-echo "==> Adding NAS mount to /etc/fstab"
-MOTION_UID=$(id -u motion)
-MOTION_GID=$(id -g motion)
-if [ "${NAS_TYPE}" = "nfs" ]; then
-    FSTAB_ENTRY="${NAS_HOST}:${NAS_SHARE} ${MOUNT_POINT} nfs defaults,_netdev,auto 0 0"
-elif [ "${NAS_TYPE}" = "smb" ]; then
-    SMB_CREDS_OPT=""
-    if [ -n "${SMB_USER}" ] && [ -n "${SMB_PASS}" ]; then
-        echo "==> Writing SMB credentials file"
-        SMB_CREDS="/etc/cam_motion/smb-credentials"
-        printf 'username=%s\npassword=%s\n' "${SMB_USER}" "${SMB_PASS}" > "${SMB_CREDS}"
-        chmod 600 "${SMB_CREDS}"
-        echo "  Written: ${SMB_CREDS}"
-        SMB_CREDS_OPT=",credentials=${SMB_CREDS}"
-    fi
-    FSTAB_ENTRY="//${NAS_HOST}${NAS_SHARE} ${MOUNT_POINT} cifs uid=${MOTION_UID},gid=${MOTION_GID}${SMB_CREDS_OPT},_netdev,auto 0 0"
+if [ -z "${NAS_HOST}" ] || [ -z "${NAS_SHARE}" ]; then
+    echo "==> NAS_HOST/NAS_SHARE not set — skipping fstab (re-run with NAS_HOST=... NAS_SHARE=... to configure)"
 else
-    echo "  ERROR: NAS_TYPE must be 'nfs' or 'smb'"
-    exit 1
+    echo "==> Adding NAS mount to /etc/fstab"
+    MOTION_UID=$(id -u motion)
+    MOTION_GID=$(id -g motion)
+    if [ "${NAS_TYPE}" = "nfs" ]; then
+        FSTAB_ENTRY="${NAS_HOST}:${NAS_SHARE} ${MOUNT_POINT} nfs defaults,_netdev,auto 0 0"
+    elif [ "${NAS_TYPE}" = "smb" ]; then
+        SMB_CREDS_OPT=""
+        if [ -n "${SMB_USER}" ] && [ -n "${SMB_PASS}" ]; then
+            echo "==> Writing SMB credentials file"
+            SMB_CREDS="/etc/cam_motion/smb-credentials"
+            printf 'username=%s\npassword=%s\n' "${SMB_USER}" "${SMB_PASS}" > "${SMB_CREDS}"
+            chmod 600 "${SMB_CREDS}"
+            echo "  Written: ${SMB_CREDS}"
+            SMB_CREDS_OPT=",credentials=${SMB_CREDS}"
+        fi
+        FSTAB_ENTRY="//${NAS_HOST}${NAS_SHARE} ${MOUNT_POINT} cifs uid=${MOTION_UID},gid=${MOTION_GID}${SMB_CREDS_OPT},_netdev,auto 0 0"
+    else
+        echo "  ERROR: NAS_TYPE must be 'nfs' or 'smb'"
+        exit 1
+    fi
+
+    # Remove any existing entry for this mount point, then write the current one
+    sed -i "\|${MOUNT_POINT}|d" /etc/fstab
+    echo "${FSTAB_ENTRY}" >> /etc/fstab
+    echo "  Written: ${FSTAB_ENTRY}"
+
+    echo "==> Mounting NAS"
+    mountpoint -q "${MOUNT_POINT}" \
+        || mount "${MOUNT_POINT}" \
+        || echo "  Warning: mount failed — verify NAS is reachable and fstab entry is correct"
 fi
-
-# Remove any existing entry for this mount point, then write the current one
-sed -i "\|${MOUNT_POINT}|d" /etc/fstab
-echo "${FSTAB_ENTRY}" >> /etc/fstab
-echo "  Written: ${FSTAB_ENTRY}"
-
-echo "==> Mounting NAS"
-mountpoint -q "${MOUNT_POINT}" \
-    || mount "${MOUNT_POINT}" \
-    || echo "  Warning: mount failed — verify NAS is reachable and fstab entry is correct"
 
 # ---------------------------------------------------------------------------
 # 7. Install and enable systemd service

@@ -421,5 +421,7 @@ To update the software after pulling new changes:
 ```bash
 cd ~/cam-motion
 git pull
-sudo bash install.sh  # safe to re-run, idempotent
+sudo bash install.sh  # omit NAS vars to skip fstab (safe if already configured)
 ```
+
+> **Note:** Re-running without `NAS_HOST`/`NAS_SHARE` skips the fstab step entirely, preserving your existing NAS mount.
