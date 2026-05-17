@@ -209,8 +209,8 @@ sudo NAS_HOST=192.168.1.x \
      bash install.sh
 
 # For SMB/CIFS:
-sudo NAS_HOST=192.168.1.x \
-     NAS_SHARE=/volume1/security-cam \
+sudo NAS_HOST=192.168.0.184 \
+     NAS_SHARE=/NAS \
      NAS_TYPE=smb \
      bash install.sh
 ```
