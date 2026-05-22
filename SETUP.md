@@ -212,7 +212,7 @@ Replace `<pi-ip>` with the Pi's IP or `.local` hostname (e.g. `camera1.local`).
 |---|---|
 | Service not starting | `journalctl -u opensecuritycam -n 50` |
 | No camera detected | `rpicam-hello --list-cameras`; reseat ribbon cable |
-| Main stream unavailable | Check mediamtx.log; verify libcamera-vid path: `which libcamera-vid` |
+| Main stream unavailable | Check mediamtx.log; verify rpicam-vid path: `which rpicam-vid` |
 | Sub stream unavailable | Wait 5–10 s after service start; sub stream comes up after main |
 | Port 554 permission denied | Verify `AmbientCapabilities=CAP_NET_BIND_SERVICE` in service file |
 | Frigate can't connect | Check Pi firewall: `sudo ufw status`; test with `ffprobe` from Frigate host |

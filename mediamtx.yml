@@ -25,27 +25,15 @@ srt: no
 ###############################################################################
 paths:
 
-  # Main stream — hardware H.264 via libcamera-vid piped through ffmpeg (copy only).
-  # libcamera-vid uses libcamera directly (no V4L2 shim needed).
-  # ffmpeg does no re-encode — it just wraps the raw H.264 bytestream for RTSP.
-  # mediamtx runs runOnInit through sh -c internally, so shell pipelines work directly.
+  # Main stream — hardware H.264 via rpicam-vid piped to ffmpeg for RTSP wrapping.
+  # mediamtx exec()s runOnInit directly (no shell), so the pipeline lives in cam_stream.sh.
   h264Preview_01_main:
-    runOnInit: >-
-      libcamera-vid -t 0 --codec h264 --width 960 --height 720
-      --framerate 10 --bitrate 2000000 --inline -o - |
-      ffmpeg -hide_banner -loglevel error -re -i - -c:v copy
-      -f rtsp rtsp://127.0.0.1:554/h264Preview_01_main
-    runOnInitRestartPause: 2s
+    runOnInit: /usr/local/bin/cam_stream.sh
+    runOnInitRestart: true
 
   # Sub stream — ffmpeg pulls main, scales to 640x480 at 5 fps.
   # x264 ultrafast keeps CPU load low on the Zero 2 W.
-  # mediamtx retries every 2 s, so this naturally comes up after /main is ready.
+  # runOnInitRestart: true so mediamtx retries until /main is ready.
   h264Preview_01_sub:
-    runOnInit: >-
-      ffmpeg -hide_banner -loglevel error
-      -rtsp_transport tcp
-      -i rtsp://127.0.0.1:554/h264Preview_01_main
-      -vf scale=640:480 -r 5
-      -c:v libx264 -preset ultrafast -b:v 500k
-      -f rtsp rtsp://127.0.0.1:554/h264Preview_01_sub
-    runOnInitRestartPause: 2s
+    runOnInit: ffmpeg -hide_banner -loglevel error -rtsp_transport tcp -i rtsp://127.0.0.1:554/h264Preview_01_main -vf scale=640:480 -r 5 -c:v libx264 -preset ultrafast -b:v 500k -f rtsp rtsp://127.0.0.1:554/h264Preview_01_sub
+    runOnInitRestart: true

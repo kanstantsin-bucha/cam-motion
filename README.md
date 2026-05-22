@@ -32,7 +32,7 @@ An open source RTSP security camera built on open hardware. Runs on a Raspberry 
 
 ```
 Pi Camera (CSI)
-    → libcamera-vid (hardware H.264)
+    → rpicam-vid (hardware H.264)
         → ffmpeg (copy, no re-encode) → mediamtx
             → rtsp://<pi-ip>:554/h264Preview_01_main   960×720 @ 10 fps
             → rtsp://<pi-ip>:554/h264Preview_01_sub    640×480 @ 5 fps

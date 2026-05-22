@@ -31,6 +31,9 @@ mkdir -p /etc/cam_motion
 echo "==> Installing mediamtx.yml"
 cp "${SCRIPT_DIR}/mediamtx.yml" /etc/cam_motion/mediamtx.yml
 
+echo "==> Installing cam_stream.sh"
+install -m 755 "${SCRIPT_DIR}/cam_stream.sh" /usr/local/bin/cam_stream.sh
+
 echo "==> Installing config.toml"
 cp "${SCRIPT_DIR}/config.toml" /etc/cam_motion/config.toml
 
