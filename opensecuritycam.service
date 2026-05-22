@@ -1,19 +1,15 @@
 [Unit]
-Description=OpenSecurityCam motion detection service
-After=network.target remote-fs.target
-Requires=remote-fs.target
+Description=OpenSecurityCam RTSP streaming service
+After=network.target
 
 [Service]
 Type=simple
-User=motion
-Group=motion
-# The OV5647 CSI sensor outputs raw 10-bit Bayer (pGAA).  On kernel 6.12
-# neither motion nor ffmpeg can negotiate this format directly via V4L2.
-# The libcamera V4L2 compat shim intercepts V4L2 ioctls and routes them
-# through the full libcamera pipeline (unicam → ISP), presenting motion
-# with a standard YUV420 stream instead.
-Environment=LD_PRELOAD=/usr/libexec/aarch64-linux-gnu/libcamera/v4l2-compat.so
-ExecStart=/usr/bin/motion -c /etc/cam_motion/motion.conf -n
+User=cam
+Group=cam
+# CAP_NET_BIND_SERVICE lets the cam user bind the privileged RTSP port 554.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+ExecStart=/usr/local/bin/mediamtx /etc/cam_motion/mediamtx.yml
 Restart=on-failure
 RestartSec=5
 StandardOutput=null
