@@ -31,9 +31,3 @@ paths:
     runOnInit: /usr/local/bin/cam_stream.sh
     runOnInitRestart: true
 
-  # Sub stream — ffmpeg pulls main, scales to 640x480 at 5 fps.
-  # x264 ultrafast keeps CPU load low on the Zero 2 W.
-  # runOnInitRestart: true so mediamtx retries until /main is ready.
-  h264Preview_01_sub:
-    runOnInit: ffmpeg -hide_banner -loglevel error -rtsp_transport tcp -i rtsp://127.0.0.1:554/h264Preview_01_main -vf scale=640:480 -r 5 -c:v libx264 -preset ultrafast -b:v 500k -f rtsp rtsp://127.0.0.1:554/h264Preview_01_sub
-    runOnInitRestart: true

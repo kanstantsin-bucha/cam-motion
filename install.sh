@@ -70,6 +70,5 @@ echo "==> Done. Service status:"
 systemctl status opensecuritycam --no-pager
 
 echo ""
-echo "==> RTSP streams (available in a few seconds):"
+echo "==> RTSP stream (available in a few seconds):"
 echo "    Main:  rtsp://$(hostname -I | awk '{print $1}'):554/h264Preview_01_main"
-echo "    Sub:   rtsp://$(hostname -I | awk '{print $1}'):554/h264Preview_01_sub"
