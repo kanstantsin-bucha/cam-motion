@@ -208,7 +208,7 @@ tail -f /var/log/cam_motion/mediamtx.log
 
 ## Home Assistant Integration
 
-### Via ONVIF (recommended — auto-discovers stream URI)
+### Via ONVIF (recommended — manually)
 
 1. Settings → Integrations → **Add Integration** → search **ONVIF**
 2. Enter:
@@ -219,23 +219,21 @@ tail -f /var/log/cam_motion/mediamtx.log
 
 HA will use WS-Discovery to find the camera automatically, or you can add it manually with the details above.
 
-### Via Frigate NVR
+After adding the camera, HA will automatically create a `binary_sensor` for motion detection. The camera runs a lightweight ffmpeg process in the background that detects pixel changes in the stream and publishes ONVIF motion events — no additional configuration needed.
+
+Add `stream:` to your `configuration.yaml` to enable the `camera.record` action for motion-triggered recording:
 
 ```yaml
-cameras:
-  front-door:
-    ffmpeg:
-      inputs:
-        - path: rtsp://<pi-ip>:554/h264Preview_01_main
-          roles:
-            - record
-            - detect
-    detect:
-      width: 960
-      height: 720
-```
+logger:
+  default: info
+  logs:
+    homeassistant.components.onvif: info
+    homeassistant.components.automation: debug
 
-Replace `<pi-ip>` with the Pi's IP or `.local` hostname (e.g. `camera1.local`).
+stream:
+
+automation: !include automations.yaml
+```
 
 ---
 

@@ -8,6 +8,7 @@ An open source RTSP/ONVIF security camera built on open hardware. Runs on a Rasp
 
 - **RTSP stream** — 960×720 @ 10 fps, hardware H.264, port 554
 - **ONVIF Profile S** — full device/media service + WS-Discovery (auto-detected by Home Assistant)
+- **Motion detection** — ffmpeg-based pixel diff; publishes `tns1:RuleEngine/MotionRegionDetector/Motion` events via ONVIF pull-point subscription; auto-creates a `binary_sensor` in Home Assistant
 - **Hardware H.264 encoding** — encoded by the Pi's camera ISP pipeline; near-zero CPU
 - **mediamtx daemon** — lightweight RTSP server with automatic source restart
 - **One-command install** — `install.sh` sets up everything from scratch
