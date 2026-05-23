@@ -310,6 +310,48 @@ def _SystemReboot(body):
     threading.Timer(1.0, lambda: subprocess.run(["sudo", "/sbin/reboot"])).start()
     return ok("<tds:SystemRebootResponse><tds:Message>Rebooting</tds:Message></tds:SystemRebootResponse>")
 
+def _GetServiceCapabilities(body):
+    path = getattr(_request_ctx, "path", "")
+    if "event" in path:
+        return ok(
+            '<tev:GetServiceCapabilitiesResponse'
+            ' xmlns:tev="http://www.onvif.org/ver10/events/wsdl">'
+            '<tev:Capabilities'
+            ' WSSubscriptionPolicySupport="false"'
+            ' WSPullPointSupport="true"'
+            ' WSPausableSubscriptionManagerInterfaceSupport="false"'
+            ' MaxNotificationProducers="0"'
+            ' MaxPullPoints="10"'
+            ' PersistentNotificationStorage="false"/>'
+            '</tev:GetServiceCapabilitiesResponse>'
+        )
+    if "media" in path:
+        return ok(
+            '<trt:GetServiceCapabilitiesResponse>'
+            '<trt:Capabilities SnapshotUri="false" Rotation="false"'
+            ' VideoSourceMode="false" OSD="false"/>'
+            '</trt:GetServiceCapabilitiesResponse>'
+        )
+    return ok(
+        '<tds:GetServiceCapabilitiesResponse>'
+        '<tds:Capabilities>'
+        '<tds:Network DNSClient="false" DynDNS="false" IPVersion6="false"'
+        ' NTP="0" ZeroConfiguration="false"/>'
+        '<tds:Security TLS1.0="false" TLS1.1="false" TLS1.2="false"'
+        ' OnboardKeyGeneration="false" AccessPolicyConfig="false"'
+        ' DefaultAccessPolicy="false" Dot1X="false" RemoteUserHandling="false"'
+        ' X.509Token="false" SAMLToken="false" KerberosToken="false"'
+        ' UsernameToken="true" HttpDigest="false" RELToken="false"/>'
+        '<tds:System DiscoveryResolve="false" DiscoveryBye="false"'
+        ' RemoteDiscovery="false" SystemBackup="false"'
+        ' SystemLogging="false" FirmwareUpgrade="false"'
+        ' HttpFirmwareUpgrade="false" HttpSystemBackup="false"'
+        ' HttpSystemLogging="false" HttpSupportInformation="false"/>'
+        '</tds:Capabilities>'
+        '</tds:GetServiceCapabilitiesResponse>'
+    )
+
+
 def _GetUsers(body):
     return ok(
         "<tds:GetUsersResponse>"
@@ -592,12 +634,19 @@ _ACTIONS = {
     "GetDNS":                                (_GetDNS,                               True),
     "GetUsers":                              (_GetUsers,                             True),
     "SystemReboot":                          (_SystemReboot,                         True),
+    "GetServiceCapabilities":               (_GetServiceCapabilities,               False),
     # Event service
     "GetEventProperties":                    (_GetEventProperties,                   True),
     "CreatePullPointSubscription":           (_CreatePullPointSubscription,          True),
+    "CreatePullPointSubscriptionRequest":    (_CreatePullPointSubscription,          True),
+    "SubscribeRequest":                      (_CreatePullPointSubscription,          True),
+    "Subscribe":                             (_CreatePullPointSubscription,          True),
     "PullMessages":                          (_PullMessages,                         True),
+    "PullMessagesRequest":                   (_PullMessages,                         True),
     "Renew":                                 (_Renew,                                True),
+    "RenewRequest":                          (_Renew,                                True),
     "Unsubscribe":                           (_Unsubscribe,                          True),
+    "UnsubscribeRequest":                    (_Unsubscribe,                          True),
     # Media service
     "GetProfiles":                           (_GetProfiles,                          True),
     "GetProfile":                            (_GetProfile,                           True),
