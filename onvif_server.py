@@ -5,6 +5,7 @@ Placeholders __PI_IP__ and __ONVIF_PASSWORD__ are substituted by install.sh.
 
 import base64
 import hashlib
+import logging
 import re
 import socket
 import struct
@@ -13,13 +14,20 @@ import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+log = logging.getLogger("onvif")
+
 # ── Config (substituted at install time) ─────────────────────────────────────
 DEVICE_IP      = "__PI_IP__"
 ONVIF_PORT     = 8090
 RTSP_URI       = "rtsp://__PI_IP__:554/h264Preview_01_main"
 ONVIF_USER     = "camera"
 ONVIF_PASSWORD = "__ONVIF_PASSWORD__"
-WIDTH, HEIGHT, FPS, BITRATE, GOP = 640, 480, 10, 1000, 5
+WIDTH, HEIGHT, FPS, BITRATE, GOP = 960, 720, 10, 2000, 10
 
 DEVICE_UUID = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"opensecuritycam.{DEVICE_IP}"))
 
@@ -54,7 +62,7 @@ def _auth_ok(xml: str) -> bool:
     user = re.search(r"<[^>]*:?Username[^>]*>([^<]+)<", xml)
     pw   = re.search(r"<[^>]*:?Password[^>]*>([^<]+)<", xml)
     if not user or not pw:
-        return True  # no header → allow (discovery phase)
+        return True  # no header — allow
     if user.group(1).strip() != ONVIF_USER:
         return False
     pw_val  = pw.group(1).strip()
@@ -67,8 +75,7 @@ def _auth_ok(xml: str) -> bool:
         raw = (base64.b64decode(nonce.group(1).strip())
                + created.group(1).strip().encode()
                + ONVIF_PASSWORD.encode())
-        expected = base64.b64encode(hashlib.sha1(raw).digest()).decode()
-        return pw_val == expected
+        return base64.b64encode(hashlib.sha1(raw).digest()).decode() == pw_val
     return pw_val == ONVIF_PASSWORD
 
 # ── Action handlers ───────────────────────────────────────────────────────────
@@ -101,18 +108,22 @@ def _GetDeviceInformation(body):
 
 def _GetCapabilities(body):
     return ok(
-        f"<tds:GetCapabilitiesResponse><tds:Capabilities><tt:Media>"
+        f"<tds:GetCapabilitiesResponse><tds:Capabilities>"
+        f"<tt:Device><tt:XAddr>http://{DEVICE_IP}:{ONVIF_PORT}/onvif/device_service</tt:XAddr></tt:Device>"
+        f"<tt:Media>"
         f"<tt:XAddr>http://{DEVICE_IP}:{ONVIF_PORT}/onvif/media_service</tt:XAddr>"
         f"<tt:StreamingCapabilities>"
         f"<tt:RTPMulticast>false</tt:RTPMulticast>"
         f"<tt:RTP_TCP>true</tt:RTP_TCP>"
         f"<tt:RTP_RTSP_TCP>true</tt:RTP_RTSP_TCP>"
         f"</tt:StreamingCapabilities>"
-        f"</tt:Media></tds:Capabilities></tds:GetCapabilitiesResponse>"
+        f"</tt:Media>"
+        f"</tds:Capabilities></tds:GetCapabilitiesResponse>"
     )
 
 def _GetServices(body):
-    svc = (
+    return ok(
+        f"<tds:GetServicesResponse>"
         f"<tds:Service>"
         f"<tds:Namespace>http://www.onvif.org/ver10/device/wsdl</tds:Namespace>"
         f"<tds:XAddr>http://{DEVICE_IP}:{ONVIF_PORT}/onvif/device_service</tds:XAddr>"
@@ -123,19 +134,89 @@ def _GetServices(body):
         f"<tds:XAddr>http://{DEVICE_IP}:{ONVIF_PORT}/onvif/media_service</tds:XAddr>"
         f"<tds:Version><tt:Major>2</tt:Major><tt:Minor>0</tt:Minor></tds:Version>"
         f"</tds:Service>"
+        f"</tds:GetServicesResponse>"
     )
-    return ok(f"<tds:GetServicesResponse>{svc}</tds:GetServicesResponse>")
 
-_PROFILE = (
-    f'<trt:Profiles token="main" fixed="true">'
-    f"<tt:Name>MainStream</tt:Name>"
+def _GetScopes(body):
+    return ok(
+        "<tds:GetScopesResponse>"
+        "<tds:Scopes><tt:ScopeDef>Fixed</tt:ScopeDef>"
+        "<tt:ScopeItem>onvif://www.onvif.org/name/OpenSecurityCam</tt:ScopeItem></tds:Scopes>"
+        "<tds:Scopes><tt:ScopeDef>Fixed</tt:ScopeDef>"
+        "<tt:ScopeItem>onvif://www.onvif.org/hardware/RPiZero2W</tt:ScopeItem></tds:Scopes>"
+        "<tds:Scopes><tt:ScopeDef>Fixed</tt:ScopeDef>"
+        "<tt:ScopeItem>onvif://www.onvif.org/Profile/Streaming</tt:ScopeItem></tds:Scopes>"
+        "</tds:GetScopesResponse>"
+    )
+
+def _GetHostname(body):
+    return ok(
+        "<tds:GetHostnameResponse><tds:HostnameInformation>"
+        "<tt:FromDHCP>true</tt:FromDHCP>"
+        "<tt:Name>camera1</tt:Name>"
+        "</tds:HostnameInformation></tds:GetHostnameResponse>"
+    )
+
+def _GetNetworkInterfaces(body):
+    return ok(
+        f'<tds:GetNetworkInterfacesResponse>'
+        f'<tds:NetworkInterfaces token="wlan0">'
+        f"<tt:Enabled>true</tt:Enabled>"
+        f"<tt:Info>"
+        f"<tt:Name>wlan0</tt:Name>"
+        f"<tt:HwAddress>00:00:00:00:00:00</tt:HwAddress>"
+        f"<tt:MTU>1500</tt:MTU>"
+        f"</tt:Info>"
+        f"<tt:IPv4>"
+        f"<tt:Enabled>true</tt:Enabled>"
+        f"<tt:Config>"
+        f"<tt:Manual>"
+        f"<tt:Address>{DEVICE_IP}</tt:Address>"
+        f"<tt:PrefixLength>24</tt:PrefixLength>"
+        f"</tt:Manual>"
+        f"<tt:DHCP>true</tt:DHCP>"
+        f"</tt:Config>"
+        f"</tt:IPv4>"
+        f"</tds:NetworkInterfaces>"
+        f"</tds:GetNetworkInterfacesResponse>"
+    )
+
+def _GetNTP(body):
+    return ok(
+        "<tds:GetNTPResponse><tds:NTPInformation>"
+        "<tt:FromDHCP>false</tt:FromDHCP>"
+        "</tds:NTPInformation></tds:GetNTPResponse>"
+    )
+
+def _GetDNS(body):
+    return ok(
+        "<tds:GetDNSResponse><tds:DNSInformation>"
+        "<tt:FromDHCP>true</tt:FromDHCP>"
+        "</tds:DNSInformation></tds:GetDNSResponse>"
+    )
+
+def _GetUsers(body):
+    return ok(
+        "<tds:GetUsersResponse>"
+        f"<tds:User><tt:Username>{ONVIF_USER}</tt:Username>"
+        "<tt:UserLevel>Administrator</tt:UserLevel></tds:User>"
+        "</tds:GetUsersResponse>"
+    )
+
+# ── Media service handlers ───────────────────────────────────────────────────
+_VS_CONF = (
     f'<tt:VideoSourceConfiguration token="vsconf">'
-    f"<tt:Name>VideoSourceConfig</tt:Name><tt:UseCount>1</tt:UseCount>"
+    f"<tt:Name>VideoSourceConfig</tt:Name>"
+    f"<tt:UseCount>1</tt:UseCount>"
     f"<tt:SourceToken>video_src_token</tt:SourceToken>"
     f'<tt:Bounds x="0" y="0" width="{WIDTH}" height="{HEIGHT}"/>'
     f"</tt:VideoSourceConfiguration>"
+)
+
+_VE_CONF = (
     f'<tt:VideoEncoderConfiguration token="veconf">'
-    f"<tt:Name>VideoEncoderConfig</tt:Name><tt:UseCount>1</tt:UseCount>"
+    f"<tt:Name>VideoEncoderConfig</tt:Name>"
+    f"<tt:UseCount>1</tt:UseCount>"
     f"<tt:Encoding>H264</tt:Encoding>"
     f"<tt:Resolution><tt:Width>{WIDTH}</tt:Width><tt:Height>{HEIGHT}</tt:Height></tt:Resolution>"
     f"<tt:Quality>5</tt:Quality>"
@@ -146,7 +227,19 @@ _PROFILE = (
     f"</tt:RateControl>"
     f"<tt:H264><tt:GovLength>{GOP}</tt:GovLength>"
     f"<tt:H264Profile>Baseline</tt:H264Profile></tt:H264>"
+    f"<tt:Multicast>"
+    f"<tt:Address><tt:Type>IPv4</tt:Type><tt:IPv4Address>0.0.0.0</tt:IPv4Address></tt:Address>"
+    f"<tt:Port>0</tt:Port><tt:TTL>0</tt:TTL><tt:AutoStart>false</tt:AutoStart>"
+    f"</tt:Multicast>"
+    f"<tt:SessionTimeout>PT60S</tt:SessionTimeout>"
     f"</tt:VideoEncoderConfiguration>"
+)
+
+_PROFILE = (
+    f'<trt:Profiles token="main" fixed="true">'
+    f"<tt:Name>MainStream</tt:Name>"
+    f"{_VS_CONF}"
+    f"{_VE_CONF}"
     f"</trt:Profiles>"
 )
 
@@ -156,6 +249,45 @@ def _GetProfiles(body):
 def _GetProfile(body):
     return ok(f"<trt:GetProfileResponse>{_PROFILE}</trt:GetProfileResponse>")
 
+def _GetVideoSources(body):
+    return ok(
+        f'<trt:GetVideoSourcesResponse><trt:VideoSources token="video_src_token">'
+        f"<tt:Framerate>{FPS}</tt:Framerate>"
+        f"<tt:Resolution><tt:Width>{WIDTH}</tt:Width><tt:Height>{HEIGHT}</tt:Height></tt:Resolution>"
+        f"<tt:Imaging/>"
+        f"</trt:VideoSources></trt:GetVideoSourcesResponse>"
+    )
+
+def _GetVideoSourceConfigurations(body):
+    return ok(
+        f"<trt:GetVideoSourceConfigurationsResponse>"
+        f"{_VS_CONF}"
+        f"</trt:GetVideoSourceConfigurationsResponse>"
+    )
+
+def _GetVideoEncoderConfigurations(body):
+    return ok(
+        f"<trt:GetVideoEncoderConfigurationsResponse>"
+        f"{_VE_CONF}"
+        f"</trt:GetVideoEncoderConfigurationsResponse>"
+    )
+
+def _GetVideoEncoderConfigurationOptions(body):
+    return ok(
+        f"<trt:GetVideoEncoderConfigurationOptionsResponse>"
+        f'<trt:Options token="veconf">'
+        f"<tt:QualityRange><tt:Min>1</tt:Min><tt:Max>100</tt:Max></tt:QualityRange>"
+        f"<tt:H264>"
+        f"<tt:ResolutionsAvailable><tt:Width>{WIDTH}</tt:Width><tt:Height>{HEIGHT}</tt:Height></tt:ResolutionsAvailable>"
+        f"<tt:GovLengthRange><tt:Min>1</tt:Min><tt:Max>100</tt:Max></tt:GovLengthRange>"
+        f"<tt:FrameRateRange><tt:Min>1</tt:Min><tt:Max>30</tt:Max></tt:FrameRateRange>"
+        f"<tt:EncodingIntervalRange><tt:Min>1</tt:Min><tt:Max>1</tt:Max></tt:EncodingIntervalRange>"
+        f"<tt:H264ProfilesSupported>Baseline</tt:H264ProfilesSupported>"
+        f"</tt:H264>"
+        f"</trt:Options>"
+        f"</trt:GetVideoEncoderConfigurationOptionsResponse>"
+    )
+
 def _GetStreamUri(body):
     return ok(
         f"<trt:GetStreamUriResponse><trt:MediaUri>"
@@ -164,14 +296,6 @@ def _GetStreamUri(body):
         f"<tt:InvalidAfterReboot>false</tt:InvalidAfterReboot>"
         f"<tt:Timeout>PT0S</tt:Timeout>"
         f"</trt:MediaUri></trt:GetStreamUriResponse>"
-    )
-
-def _GetVideoSources(body):
-    return ok(
-        f'<trt:GetVideoSourcesResponse><trt:VideoSources token="video_src_token">'
-        f"<tt:Framerate>{FPS}</tt:Framerate>"
-        f"<tt:Resolution><tt:Width>{WIDTH}</tt:Width><tt:Height>{HEIGHT}</tt:Height></tt:Resolution>"
-        f"</trt:VideoSources></trt:GetVideoSourcesResponse>"
     )
 
 def _GetSnapshotUri(body):
@@ -184,16 +308,43 @@ def _GetSnapshotUri(body):
         "</trt:MediaUri></trt:GetSnapshotUriResponse>"
     )
 
+def _GetCompatibleVideoEncoderConfigurations(body):
+    return ok(
+        f"<trt:GetCompatibleVideoEncoderConfigurationsResponse>"
+        f"{_VE_CONF}"
+        f"</trt:GetCompatibleVideoEncoderConfigurationsResponse>"
+    )
+
+def _GetCompatibleVideoSourceConfigurations(body):
+    return ok(
+        f"<trt:GetCompatibleVideoSourceConfigurationsResponse>"
+        f"{_VS_CONF}"
+        f"</trt:GetCompatibleVideoSourceConfigurationsResponse>"
+    )
+
 _ACTIONS = {
-    "GetSystemDateAndTime": (_GetSystemDateAndTime, False),
-    "GetDeviceInformation": (_GetDeviceInformation, True),
-    "GetCapabilities":      (_GetCapabilities,      True),
-    "GetServices":          (_GetServices,          True),
-    "GetProfiles":          (_GetProfiles,          True),
-    "GetProfile":           (_GetProfile,           True),
-    "GetStreamUri":         (_GetStreamUri,         True),
-    "GetVideoSources":      (_GetVideoSources,      True),
-    "GetSnapshotUri":       (_GetSnapshotUri,       True),
+    # Device service
+    "GetSystemDateAndTime":                  (_GetSystemDateAndTime,                 False),
+    "GetDeviceInformation":                  (_GetDeviceInformation,                 True),
+    "GetCapabilities":                       (_GetCapabilities,                      True),
+    "GetServices":                           (_GetServices,                          True),
+    "GetScopes":                             (_GetScopes,                            True),
+    "GetHostname":                           (_GetHostname,                          True),
+    "GetNetworkInterfaces":                  (_GetNetworkInterfaces,                 True),
+    "GetNTP":                                (_GetNTP,                               True),
+    "GetDNS":                                (_GetDNS,                               True),
+    "GetUsers":                              (_GetUsers,                             True),
+    # Media service
+    "GetProfiles":                           (_GetProfiles,                          True),
+    "GetProfile":                            (_GetProfile,                           True),
+    "GetVideoSources":                       (_GetVideoSources,                      True),
+    "GetVideoSourceConfigurations":          (_GetVideoSourceConfigurations,         True),
+    "GetVideoEncoderConfigurations":         (_GetVideoEncoderConfigurations,        True),
+    "GetVideoEncoderConfigurationOptions":   (_GetVideoEncoderConfigurationOptions,  True),
+    "GetStreamUri":                          (_GetStreamUri,                         True),
+    "GetSnapshotUri":                        (_GetSnapshotUri,                       True),
+    "GetCompatibleVideoEncoderConfigurations": (_GetCompatibleVideoEncoderConfigurations, True),
+    "GetCompatibleVideoSourceConfigurations":  (_GetCompatibleVideoSourceConfigurations,  True),
 }
 
 # ── HTTP SOAP server ──────────────────────────────────────────────────────────
@@ -204,7 +355,6 @@ class _Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         body   = self.rfile.read(length).decode("utf-8", errors="ignore")
 
-        # Determine action from SOAPAction header or body element
         action = self.headers.get("SOAPAction", "").strip('"').rsplit("/", 1)[-1]
         if not action:
             m = re.search(r"<(?:[^:>]+:)?Body[^>]*>\s*<(?:[^:>]+:)?(\w+)", body)
@@ -213,14 +363,17 @@ class _Handler(BaseHTTPRequestHandler):
 
         entry = _ACTIONS.get(action)
         if entry is None:
+            log.warning("Unknown action: %s from %s", action, self.client_address[0])
             self._reply(400, fault(f"Unknown action: {action}"))
             return
 
         handler, needs_auth = entry
         if needs_auth and not _auth_ok(body):
+            log.warning("Auth failed for action: %s", action)
             self._reply(401, fault("Authentication failed"))
             return
 
+        log.info("OK %s from %s", action, self.client_address[0])
         self._reply(200, handler(body))
 
     def _reply(self, code, xml):
@@ -253,9 +406,9 @@ _PROBE_MATCH = (
     "<a:EndpointReference><a:Address>urn:uuid:{device_uuid}</a:Address></a:EndpointReference>"
     "<d:Types>dn:NetworkVideoTransmitter</d:Types>"
     "<d:Scopes>"
-    " onvif://www.onvif.org/name/OpenSecurityCam"
-    " onvif://www.onvif.org/hardware/RPiZero2W"
-    " onvif://www.onvif.org/Profile/Streaming"
+    "onvif://www.onvif.org/name/OpenSecurityCam "
+    "onvif://www.onvif.org/hardware/RPiZero2W "
+    "onvif://www.onvif.org/Profile/Streaming"
     "</d:Scopes>"
     "<d:XAddrs>http://{device_ip}:{onvif_port}/onvif/device_service</d:XAddrs>"
     "<d:MetadataVersion>1</d:MetadataVersion>"
@@ -264,16 +417,22 @@ _PROBE_MATCH = (
 
 
 def _wsd_loop():
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-    except AttributeError:
-        pass
-    sock.bind(("", _WSD_PORT))
-    mreq = struct.pack("4s4s", socket.inet_aton(_WSD_GROUP), socket.inet_aton("0.0.0.0"))
-    sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-    sock.settimeout(1.0)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        except AttributeError:
+            pass
+        sock.bind(("", _WSD_PORT))
+        mreq = struct.pack("4s4s", socket.inet_aton(_WSD_GROUP), socket.inet_aton("0.0.0.0"))
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+        sock.settimeout(1.0)
+        log.info("WS-Discovery listening on UDP %s:%d", _WSD_GROUP, _WSD_PORT)
+    except OSError as e:
+        log.error("WS-Discovery socket failed: %s", e)
+        return
+
     while True:
         try:
             data, addr = sock.recvfrom(65535)
@@ -292,10 +451,12 @@ def _wsd_loop():
                 onvif_port=ONVIF_PORT,
             )
             sock.sendto(reply.encode(), addr)
-        except Exception:
-            pass
+            log.info("WS-Discovery probe answered to %s", addr)
+        except Exception as e:
+            log.error("WS-Discovery error: %s", e)
 
 
 if __name__ == "__main__":
     threading.Thread(target=_wsd_loop, daemon=True).start()
+    log.info("ONVIF HTTP service on port %d, device UUID %s", ONVIF_PORT, DEVICE_UUID)
     HTTPServer(("0.0.0.0", ONVIF_PORT), _Handler).serve_forever()
