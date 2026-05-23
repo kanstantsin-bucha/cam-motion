@@ -91,6 +91,10 @@ sed \
     "${SCRIPT_DIR}/onvif_server.py" > /usr/local/bin/onvif_server.py
 chmod 755 /usr/local/bin/onvif_server.py
 
+# Allow cam user to reboot (needed for ONVIF SystemReboot action)
+echo "cam ALL=(ALL) NOPASSWD: /sbin/reboot" > /etc/sudoers.d/cam-reboot
+chmod 440 /etc/sudoers.d/cam-reboot
+
 # ---------------------------------------------------------------------------
 # 8. Install and enable ONVIF service
 # ---------------------------------------------------------------------------

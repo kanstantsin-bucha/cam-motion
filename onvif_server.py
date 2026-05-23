@@ -6,9 +6,11 @@ Placeholders __PI_IP__ and __ONVIF_PASSWORD__ are substituted by install.sh.
 import base64
 import hashlib
 import logging
+import os
 import re
 import socket
 import struct
+import subprocess
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -30,6 +32,16 @@ ONVIF_PASSWORD = "__ONVIF_PASSWORD__"
 WIDTH, HEIGHT, FPS, BITRATE, GOP = 960, 720, 10, 2000, 10
 
 DEVICE_UUID = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"opensecuritycam.{DEVICE_IP}"))
+
+def _read_mac():
+    for iface in ("wlan0", "eth0", "end0"):
+        try:
+            return open(f"/sys/class/net/{iface}/address").read().strip(), iface
+        except OSError:
+            continue
+    return "00:00:00:00:00:00", "wlan0"
+
+DEVICE_MAC, DEVICE_IFS = _read_mac()
 
 # ── SOAP namespaces ───────────────────────────────────────────────────────────
 NS = dict(
@@ -163,8 +175,8 @@ def _GetNetworkInterfaces(body):
         f'<tds:NetworkInterfaces token="wlan0">'
         f"<tt:Enabled>true</tt:Enabled>"
         f"<tt:Info>"
-        f"<tt:Name>wlan0</tt:Name>"
-        f"<tt:HwAddress>00:00:00:00:00:00</tt:HwAddress>"
+        f"<tt:Name>{DEVICE_IFS}</tt:Name>"
+        f"<tt:HwAddress>{DEVICE_MAC}</tt:HwAddress>"
         f"<tt:MTU>1500</tt:MTU>"
         f"</tt:Info>"
         f"<tt:IPv4>"
@@ -194,6 +206,10 @@ def _GetDNS(body):
         "<tt:FromDHCP>true</tt:FromDHCP>"
         "</tds:DNSInformation></tds:GetDNSResponse>"
     )
+
+def _SystemReboot(body):
+    threading.Timer(1.0, lambda: subprocess.run(["sudo", "/sbin/reboot"])).start()
+    return ok("<tds:SystemRebootResponse><tds:Message>Rebooting</tds:Message></tds:SystemRebootResponse>")
 
 def _GetUsers(body):
     return ok(
@@ -334,6 +350,7 @@ _ACTIONS = {
     "GetNTP":                                (_GetNTP,                               True),
     "GetDNS":                                (_GetDNS,                               True),
     "GetUsers":                              (_GetUsers,                             True),
+    "SystemReboot":                          (_SystemReboot,                         True),
     # Media service
     "GetProfiles":                           (_GetProfiles,                          True),
     "GetProfile":                            (_GetProfile,                           True),
