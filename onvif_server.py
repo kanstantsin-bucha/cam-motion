@@ -453,9 +453,15 @@ def _PullMessages(body):
     ts = _utcnow()
     events_xml = ""
     expiry = time.time() + 3600
-
     if token:
         with _subs_lock:
+            if token not in _subscriptions:
+                q = queue.Queue()
+                with _motion_lock:
+                    current = _motion_state
+                q.put((_utcnow(), current, "Initialized"))
+                _subscriptions[token] = {"expiry": expiry, "queue": q}
+                log.info("Adopted stale subscription token %s", token)
             sub = _subscriptions.get(token)
             if sub:
                 sub["expiry"] = time.time() + 3600
