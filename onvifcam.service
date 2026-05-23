@@ -1,0 +1,14 @@
+[Unit]
+Description=OpenSecurityCam ONVIF service
+After=network-online.target opensecuritycam.service
+Wants=network-online.target
+Requires=opensecuritycam.service
+
+[Service]
+User=cam
+ExecStart=/usr/bin/python3 /usr/local/bin/onvif_server.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

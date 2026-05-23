@@ -1,16 +1,15 @@
 # OpenSecurityCam
 
-An open source RTSP security camera built on open hardware. Runs on a Raspberry Pi with an official camera module and streams two Reolink-compatible RTSP paths for consumption by Frigate NVR or any RTSP-capable system.
+An open source RTSP/ONVIF security camera built on open hardware. Runs on a Raspberry Pi with an official camera module, streams H.264 over RTSP, and exposes an ONVIF Profile S endpoint for plug-and-play integration with Home Assistant, Frigate NVR, and any ONVIF-compatible system.
 
 ---
 
 ## Features
 
-- **Dual RTSP streams** — main (960×720 @ 10 fps) and sub (640×480 @ 5 fps), Reolink-style paths on port 554
-- **Hardware H.264 encoding** — main stream encoded by the Pi's camera ISP pipeline; very low CPU
-- **Frigate-ready** — stream paths mimic Reolink cameras so Frigate config is familiar
-- **Open hardware** — Raspberry Pi + official Pi Camera Module (CSI), no proprietary lock-in
-- **mediamtx daemon** — lightweight RTSP server with automatic source process restart
+- **RTSP stream** — 960×720 @ 10 fps, hardware H.264, port 554
+- **ONVIF Profile S** — full device/media service + WS-Discovery (auto-detected by Home Assistant)
+- **Hardware H.264 encoding** — encoded by the Pi's camera ISP pipeline; near-zero CPU
+- **mediamtx daemon** — lightweight RTSP server with automatic source restart
 - **One-command install** — `install.sh` sets up everything from scratch
 
 ---
@@ -24,8 +23,6 @@ An open source RTSP security camera built on open hardware. Runs on a Raspberry 
 | Storage | microSD 16 GB+ (Class 10 or faster) | same |
 | OS | Raspberry Pi OS Lite 64-bit (Bookworm) | same |
 
-> **Pi Zero 2 W note:** fully supported. The sub stream uses x264 `ultrafast` to keep software transcode CPU manageable. The main stream uses hardware encoding (near-zero CPU).
-
 ---
 
 ## How It Works
@@ -35,8 +32,11 @@ Pi Camera (CSI)
     → rpicam-vid (hardware H.264)
         → ffmpeg (copy, no re-encode) → mediamtx
             → rtsp://<pi-ip>:554/h264Preview_01_main   960×720 @ 10 fps
-            → rtsp://<pi-ip>:554/h264Preview_01_sub    640×480 @ 5 fps
-                ← ffmpeg (pulls main, scales, re-publishes)
+
+onvif_server.py
+    → ONVIF HTTP service on port 8090
+    → WS-Discovery on UDP 3702
+    → returns RTSP URI to ONVIF clients
 ```
 
 ---
@@ -62,7 +62,9 @@ sudo bash install.sh
 | File | Purpose |
 |---|---|
 | `config.toml` | Camera name |
-| `mediamtx.yml` | Stream paths, resolutions, framerates, port |
+| `mediamtx.yml` | RTSP stream path and port |
+| `cam_stream.sh` | rpicam-vid + ffmpeg pipeline |
+| `onvif_server.py` | ONVIF server (config substituted at install time) |
 
 ### `config.toml`
 
@@ -76,12 +78,30 @@ name = "front-door"
 | Parameter | Default | Description |
 |---|---|---|
 | `rtspAddress` | `:554` | RTSP listen port |
-| Main `--width` / `--height` | 960×720 | Main stream resolution |
-| Main `--framerate` | 10 | Main stream FPS |
-| Main `--bitrate` | 2000000 | Main stream bitrate (bps) |
-| Sub `scale=` | 640×480 | Sub stream resolution |
-| Sub `-r` | 5 | Sub stream FPS |
-| Sub `-b:v` | 500k | Sub stream bitrate |
+
+### Key `cam_stream.sh` parameters
+
+| Parameter | Default | Description |
+|---|---|---|
+| `--width` / `--height` | 960×720 | Stream resolution |
+| `--framerate` | 10 | FPS |
+| `--bitrate` | 2000000 | Bitrate (bps) |
+
+---
+
+## ONVIF
+
+The ONVIF server (`onvif_server.py`) implements Profile S and WS-Discovery. It is installed and configured by `install.sh`, which generates a random ONVIF password on first install and prints it to the console.
+
+| Endpoint | Value |
+|---|---|
+| Device service | `http://<pi-ip>:8090/onvif/device_service` |
+| Media service | `http://<pi-ip>:8090/onvif/media_service` |
+| WS-Discovery | UDP multicast 239.255.255.250:3702 |
+| Username | `camera` |
+| Password | generated at install time |
+
+**To add in Home Assistant:** Settings → Integrations → Add → ONVIF → enter the host, port `8090`, and credentials printed during install.
 
 ---
 
@@ -95,12 +115,10 @@ cameras:
         - path: rtsp://<pi-ip>:554/h264Preview_01_main
           roles:
             - record
-        - path: rtsp://<pi-ip>:554/h264Preview_01_sub
-          roles:
             - detect
     detect:
-      width: 640
-      height: 480
+      width: 960
+      height: 720
 ```
 
 ---
@@ -110,9 +128,12 @@ cameras:
 ```
 OpenSecurityCam/
 ├── config.toml              # Camera name
-├── mediamtx.yml             # Stream configuration
+├── mediamtx.yml             # RTSP stream configuration
+├── cam_stream.sh            # rpicam-vid → ffmpeg pipeline
+├── onvif_server.py          # ONVIF Profile S + WS-Discovery server
 ├── install.sh               # One-command installer
-├── opensecuritycam.service  # systemd unit
+├── opensecuritycam.service  # systemd unit (mediamtx)
+├── onvifcam.service         # systemd unit (ONVIF server)
 └── SETUP.md                 # Full setup guide
 ```
 

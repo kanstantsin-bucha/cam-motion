@@ -1,6 +1,6 @@
 # OpenSecurityCam — Setup Guide
 
-Complete step-by-step guide from a blank SD card to a running RTSP security camera.
+Complete step-by-step guide from a blank SD card to a running RTSP/ONVIF security camera.
 
 ---
 
@@ -31,7 +31,7 @@ Complete step-by-step guide from a blank SD card to a running RTSP security came
    | Setting | Value |
    |---|---|
    | Hostname | `camera1` (unique name per camera) |
-   | Username | `pi` |
+   | Username | `camera` |
    | Password | a strong password |
    | WiFi SSID/password | your network credentials |
    | Enable SSH | ✅ Use password authentication |
@@ -52,7 +52,7 @@ Complete step-by-step guide from a blank SD card to a running RTSP security came
 ## Step 3 — SSH Into the Pi
 
 ```bash
-ssh pi@camera1.local
+ssh camera@camera1.local
 ```
 
 If `camera1.local` doesn't resolve, use the IP from your router's DHCP list.
@@ -119,7 +119,7 @@ nano config.toml
 name = "front-door"   # used in Frigate camera label and log entries
 ```
 
-Optionally adjust stream parameters in `mediamtx.yml` (resolution, fps, bitrate).
+Optionally adjust stream parameters in `cam_stream.sh` (resolution, fps, bitrate).
 
 ---
 
@@ -135,44 +135,70 @@ The installer does the following:
 |---|---|
 | 1 | Installs `ffmpeg` via apt |
 | 2 | Creates `cam` system user and adds to `video` group |
-| 3 | Copies `mediamtx.yml` and `config.toml` to `/etc/cam_motion/` |
+| 3 | Copies `mediamtx.yml`, `cam_stream.sh`, and `config.toml` to `/etc/cam_motion/` |
 | 4 | Creates `/var/log/cam_motion/` owned by `cam` |
 | 5 | Downloads and installs `mediamtx` binary to `/usr/local/bin/` |
 | 6 | Installs and starts `opensecuritycam` systemd service |
+| 7 | Installs `onvif_server.py` to `/usr/local/bin/` (generates ONVIF password on first run) |
+| 8 | Installs and starts `onvifcam` systemd service |
+
+At the end the installer prints:
+
+```
+==> RTSP stream (available in a few seconds):
+    Main:  rtsp://<pi-ip>:554/h264Preview_01_main
+
+==> ONVIF endpoint:
+    http://<pi-ip>:8090/onvif/device_service
+    User: camera  Password: <generated-password>
+```
+
+**Save the ONVIF password** — you will need it when adding the camera to Home Assistant.
 
 ---
 
 ## Step 9 — Verify Everything Works
 
-### Check the service is running
+### Check services are running
 
 ```bash
 systemctl status opensecuritycam
+systemctl status onvifcam
 ```
 
-Expected: `Active: active (running)`
+Expected: both `Active: active (running)`
 
-### Check the streams are available
+### Check the RTSP stream
 
 ```bash
-ffprobe -v quiet -show_streams rtsp://127.0.0.1:554/h264Preview_01_main 2>&1 | grep codec_name
+ffprobe -v error -show_entries stream=codec_name,width,height \
+  -of default=noprint_wrappers=1 \
+  rtsp://127.0.0.1:554/h264Preview_01_main
 ```
 
 Expected: `codec_name=h264`
 
-Wait ~5 seconds after service start for the sub stream to come up:
+### Check the ONVIF endpoint
 
 ```bash
-ffprobe -v quiet -show_streams rtsp://127.0.0.1:554/h264Preview_01_sub 2>&1 | grep codec_name
+curl -s -X POST http://127.0.0.1:8090/onvif/device_service \
+  -H 'Content-Type: application/soap+xml' \
+  -d '<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"
+        xmlns:tds="http://www.onvif.org/ver10/device/wsdl">
+        <s:Body><tds:GetSystemDateAndTime/></s:Body>
+      </s:Envelope>'
 ```
 
-Expected: `codec_name=h264`
+Expected: a SOAP XML response containing `GetSystemDateAndTimeResponse`.
 
 ### Check the logs
 
 ```bash
-# Service startup:
+# RTSP service:
 journalctl -u opensecuritycam -n 30
+
+# ONVIF service:
+journalctl -u onvifcam -n 30
 
 # mediamtx log:
 tail -f /var/log/cam_motion/mediamtx.log
@@ -180,9 +206,20 @@ tail -f /var/log/cam_motion/mediamtx.log
 
 ---
 
-## Frigate Integration
+## Home Assistant Integration
 
-Add to your Frigate `config.yaml`:
+### Via ONVIF (recommended — auto-discovers stream URI)
+
+1. Settings → Integrations → **Add Integration** → search **ONVIF**
+2. Enter:
+   - Host: `<pi-ip>` or `camera1.local`
+   - Port: `8090`
+   - Username: `camera`
+   - Password: the password printed by `install.sh`
+
+HA will use WS-Discovery to find the camera automatically, or you can add it manually with the details above.
+
+### Via Frigate NVR
 
 ```yaml
 cameras:
@@ -192,12 +229,10 @@ cameras:
         - path: rtsp://<pi-ip>:554/h264Preview_01_main
           roles:
             - record
-        - path: rtsp://<pi-ip>:554/h264Preview_01_sub
-          roles:
             - detect
     detect:
-      width: 640
-      height: 480
+      width: 960
+      height: 720
 ```
 
 Replace `<pi-ip>` with the Pi's IP or `.local` hostname (e.g. `camera1.local`).
@@ -212,10 +247,10 @@ Replace `<pi-ip>` with the Pi's IP or `.local` hostname (e.g. `camera1.local`).
 |---|---|
 | Service not starting | `journalctl -u opensecuritycam -n 50` |
 | No camera detected | `rpicam-hello --list-cameras`; reseat ribbon cable |
-| Main stream unavailable | Check mediamtx.log; verify rpicam-vid path: `which rpicam-vid` |
-| Sub stream unavailable | Wait 5–10 s after service start; sub stream comes up after main |
+| RTSP stream unavailable | Check mediamtx.log; verify `rpicam-vid` path: `which rpicam-vid` |
 | Port 554 permission denied | Verify `AmbientCapabilities=CAP_NET_BIND_SERVICE` in service file |
-| Frigate can't connect | Check Pi firewall: `sudo ufw status`; test with `ffprobe` from Frigate host |
+| ONVIF not responding | `journalctl -u onvifcam -n 20`; check port 8090 is free: `ss -tlnp \| grep 8090` |
+| HA can't connect | Check Pi firewall: `sudo ufw status`; test with `curl` from HA host |
 
 ### Camera diagnostics
 
@@ -224,10 +259,7 @@ Replace `<pi-ip>` with the Pi's IP or `.local` hostname (e.g. `camera1.local`).
 rpicam-hello --list-cameras
 
 # Capture a test JPEG:
-rpicam-still -o /tmp/test.jpg && scp pi@camera1.local:/tmp/test.jpg .
-
-# List V4L2 devices (for reference):
-v4l2-ctl --list-devices
+rpicam-still -o /tmp/test.jpg && scp camera@camera1.local:/tmp/test.jpg .
 ```
 
 ### Stream diagnostics
@@ -243,17 +275,34 @@ ffprobe -v error -show_streams rtsp://127.0.0.1:554/h264Preview_01_main
 ffprobe -v error -show_streams rtsp://camera1.local:554/h264Preview_01_main
 ```
 
+### ONVIF diagnostics
+
+```bash
+# Check ONVIF service:
+systemctl status onvifcam
+
+# Check port:
+ss -tlnp | grep 8090
+
+# Retrieve ONVIF password from installed script:
+grep '^ONVIF_PASSWORD' /usr/local/bin/onvif_server.py
+```
+
 ### Logs
 
 ```bash
-# Service startup and crashes:
+# RTSP startup and crashes:
 journalctl -u opensecuritycam -n 50
+
+# ONVIF startup and crashes:
+journalctl -u onvifcam -n 50
 
 # mediamtx runtime log:
 tail -f /var/log/cam_motion/mediamtx.log
 
 # Restart after config changes:
 sudo systemctl restart opensecuritycam
+sudo systemctl restart onvifcam
 ```
 
 ---
@@ -265,3 +314,5 @@ cd ~/cam-motion
 git pull
 sudo bash install.sh
 ```
+
+The installer reuses the existing ONVIF password on updates — no need to reconfigure Home Assistant.
