@@ -6,12 +6,13 @@ Placeholders __PI_IP__ and __ONVIF_PASSWORD__ are substituted by install.sh.
 import base64
 import hashlib
 import logging
-import os
+import queue
 import re
 import socket
 import struct
 import subprocess
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -31,6 +32,9 @@ ONVIF_USER     = "camera"
 ONVIF_PASSWORD = "__ONVIF_PASSWORD__"
 WIDTH, HEIGHT, FPS, BITRATE, GOP = 960, 720, 10, 2000, 10
 
+MOTION_THRESHOLD = 0.02   # fraction of pixels that must change (0–1)
+MOTION_COOLDOWN  = 10.0   # seconds before motion clears
+
 DEVICE_UUID = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"opensecuritycam.{DEVICE_IP}"))
 
 def _read_mac():
@@ -42,6 +46,90 @@ def _read_mac():
     return "00:00:00:00:00:00", "wlan0"
 
 DEVICE_MAC, DEVICE_IFS = _read_mac()
+
+# ── Motion state ──────────────────────────────────────────────────────────────
+_motion_state       = False
+_motion_lock        = threading.Lock()
+_motion_clear_timer = None
+
+# pull-point subscriptions: token -> {"expiry": float, "queue": Queue}
+_subscriptions = {}
+_subs_lock     = threading.Lock()
+_request_ctx   = threading.local()   # per-request HTTP path
+
+
+def _utcnow():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _expiry_str(ts):
+    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _enqueue_motion_event(is_motion, operation="Changed"):
+    ts = _utcnow()
+    now = time.time()
+    with _subs_lock:
+        for token in list(_subscriptions):
+            sub = _subscriptions[token]
+            if now > sub["expiry"]:
+                del _subscriptions[token]
+                continue
+            sub["queue"].put((ts, is_motion, operation))
+
+
+def _set_motion(is_motion):
+    global _motion_state
+    with _motion_lock:
+        if _motion_state == is_motion:
+            return
+        _motion_state = is_motion
+    log.info("Motion: %s", is_motion)
+    _enqueue_motion_event(is_motion)
+
+
+def _on_motion_detected():
+    global _motion_clear_timer
+    _set_motion(True)
+    if _motion_clear_timer is not None:
+        _motion_clear_timer.cancel()
+    _motion_clear_timer = threading.Timer(MOTION_COOLDOWN, lambda: _set_motion(False))
+    _motion_clear_timer.start()
+
+
+def _motion_detector_loop():
+    """Read low-res grayscale frames from RTSP and detect pixel changes."""
+    w, h = 160, 90
+    frame_size = w * h
+    cmd = [
+        "ffmpeg", "-loglevel", "quiet",
+        "-rtsp_transport", "tcp",
+        "-i", RTSP_URI,
+        "-vf", f"fps=2,scale={w}:{h}",
+        "-f", "rawvideo", "-pix_fmt", "gray", "-",
+    ]
+    while True:
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            log.info("Motion detector started (pid %d)", proc.pid)
+            prev = None
+            while True:
+                data = proc.stdout.read(frame_size)
+                if len(data) < frame_size:
+                    break
+                if prev is not None:
+                    diff = sum(abs(a - b) for a, b in zip(data, prev))
+                    score = diff / (frame_size * 255)
+                    if score > MOTION_THRESHOLD:
+                        log.debug("Motion score %.4f", score)
+                        _on_motion_detected()
+                prev = data
+            proc.wait()
+            log.warning("Motion detector exited, restarting in 5s")
+        except Exception as e:
+            log.error("Motion detector error: %s", e)
+        time.sleep(5)
+
 
 # ── SOAP namespaces ───────────────────────────────────────────────────────────
 NS = dict(
@@ -122,6 +210,12 @@ def _GetCapabilities(body):
     return ok(
         f"<tds:GetCapabilitiesResponse><tds:Capabilities>"
         f"<tt:Device><tt:XAddr>http://{DEVICE_IP}:{ONVIF_PORT}/onvif/device_service</tt:XAddr></tt:Device>"
+        f"<tt:Events>"
+        f"<tt:XAddr>http://{DEVICE_IP}:{ONVIF_PORT}/onvif/event_service</tt:XAddr>"
+        f"<tt:WSSubscriptionPolicySupport>false</tt:WSSubscriptionPolicySupport>"
+        f"<tt:WSPullPointSupport>true</tt:WSPullPointSupport>"
+        f"<tt:WSPausableSubscriptionManagerInterfaceSupport>false</tt:WSPausableSubscriptionManagerInterfaceSupport>"
+        f"</tt:Events>"
         f"<tt:Media>"
         f"<tt:XAddr>http://{DEVICE_IP}:{ONVIF_PORT}/onvif/media_service</tt:XAddr>"
         f"<tt:StreamingCapabilities>"
@@ -139,6 +233,11 @@ def _GetServices(body):
         f"<tds:Service>"
         f"<tds:Namespace>http://www.onvif.org/ver10/device/wsdl</tds:Namespace>"
         f"<tds:XAddr>http://{DEVICE_IP}:{ONVIF_PORT}/onvif/device_service</tds:XAddr>"
+        f"<tds:Version><tt:Major>2</tt:Major><tt:Minor>0</tt:Minor></tds:Version>"
+        f"</tds:Service>"
+        f"<tds:Service>"
+        f"<tds:Namespace>http://www.onvif.org/ver10/events/wsdl</tds:Namespace>"
+        f"<tds:XAddr>http://{DEVICE_IP}:{ONVIF_PORT}/onvif/event_service</tds:XAddr>"
         f"<tds:Version><tt:Major>2</tt:Major><tt:Minor>0</tt:Minor></tds:Version>"
         f"</tds:Service>"
         f"<tds:Service>"
@@ -218,6 +317,146 @@ def _GetUsers(body):
         "<tt:UserLevel>Administrator</tt:UserLevel></tds:User>"
         "</tds:GetUsersResponse>"
     )
+
+# ── Event service handlers ────────────────────────────────────────────────────
+def _GetEventProperties(body):
+    return ok(
+        '<tev:GetEventPropertiesResponse'
+        ' xmlns:tev="http://www.onvif.org/ver10/events/wsdl"'
+        ' xmlns:tns1="http://www.onvif.org/ver10/topics"'
+        ' xmlns:wstop="http://docs.oasis-open.org/wsn/t-1"'
+        ' xmlns:xs="http://www.w3.org/2001/XMLSchema">'
+        '<tev:TopicNamespaceLocation/>'
+        '<tev:FixedTopicSet>true</tev:FixedTopicSet>'
+        '<tev:TopicSet>'
+        '<tns1:VideoAnalytics>'
+        '<tns1:MotionAlarm wstop:topic="true">'
+        '<tt:MessageDescription IsProperty="true">'
+        '<tt:Source>'
+        '<tt:SimpleItemDescription Name="VideoSourceConfigurationToken" Type="tt:ReferenceToken"/>'
+        '</tt:Source>'
+        '<tt:Key/>'
+        '<tt:Data>'
+        '<tt:SimpleItemDescription Name="IsMotion" Type="xs:boolean"/>'
+        '</tt:Data>'
+        '</tt:MessageDescription>'
+        '</tns1:MotionAlarm>'
+        '</tns1:VideoAnalytics>'
+        '</tev:TopicSet>'
+        '</tev:GetEventPropertiesResponse>'
+    )
+
+
+def _CreatePullPointSubscription(body):
+    token = str(uuid.uuid4())
+    expiry = time.time() + 3600
+    q = queue.Queue()
+    with _subs_lock:
+        _subscriptions[token] = {"expiry": expiry, "queue": q}
+
+    ts = _utcnow()
+    with _motion_lock:
+        current = _motion_state
+    q.put((ts, current, "Initialized"))
+
+    sub_addr = f"http://{DEVICE_IP}:{ONVIF_PORT}/onvif/event_service?token={token}"
+    return ok(
+        f'<tev:CreatePullPointSubscriptionResponse'
+        f' xmlns:tev="http://www.onvif.org/ver10/events/wsdl"'
+        f' xmlns:wsnt="http://docs.oasis-open.org/wsn/b-2"'
+        f' xmlns:a="http://www.w3.org/2005/08/addressing">'
+        f'<tev:SubscriptionReference>'
+        f'<a:Address>{sub_addr}</a:Address>'
+        f'</tev:SubscriptionReference>'
+        f'<wsnt:CurrentTime>{ts}</wsnt:CurrentTime>'
+        f'<wsnt:TerminationTime>{_expiry_str(expiry)}</wsnt:TerminationTime>'
+        f'</tev:CreatePullPointSubscriptionResponse>'
+    )
+
+
+def _notification_xml(ts, is_motion, operation):
+    val = "true" if is_motion else "false"
+    return (
+        f'<wsnt:NotificationMessage'
+        f' xmlns:wsnt="http://docs.oasis-open.org/wsn/b-2"'
+        f' xmlns:tns1="http://www.onvif.org/ver10/topics">'
+        f'<wsnt:Topic Dialect="http://www.onvif.org/ver10/tev/topicExpression/ConcreteSet">'
+        f'tns1:VideoAnalytics/MotionAlarm'
+        f'</wsnt:Topic>'
+        f'<wsnt:Message>'
+        f'<tt:Message UtcTime="{ts}" PropertyOperation="{operation}">'
+        f'<tt:Source>'
+        f'<tt:SimpleItem Name="VideoSourceConfigurationToken" Value="vsconf"/>'
+        f'</tt:Source>'
+        f'<tt:Key/>'
+        f'<tt:Data>'
+        f'<tt:SimpleItem Name="IsMotion" Value="{val}"/>'
+        f'</tt:Data>'
+        f'</tt:Message>'
+        f'</wsnt:Message>'
+        f'</wsnt:NotificationMessage>'
+    )
+
+
+def _subscription_token_from_path():
+    path = getattr(_request_ctx, "path", "")
+    m = re.search(r"[?&]token=([a-f0-9-]+)", path)
+    return m.group(1) if m else None
+
+
+def _PullMessages(body):
+    token = _subscription_token_from_path()
+    ts = _utcnow()
+    events_xml = ""
+    expiry = time.time() + 3600
+
+    if token:
+        with _subs_lock:
+            sub = _subscriptions.get(token)
+            if sub:
+                sub["expiry"] = time.time() + 3600
+                expiry = sub["expiry"]
+                while True:
+                    try:
+                        event_ts, is_motion, operation = sub["queue"].get_nowait()
+                        events_xml += _notification_xml(event_ts, is_motion, operation)
+                    except queue.Empty:
+                        break
+
+    return ok(
+        f'<tev:PullMessagesResponse'
+        f' xmlns:tev="http://www.onvif.org/ver10/events/wsdl">'
+        f'<tev:CurrentTime>{ts}</tev:CurrentTime>'
+        f'<tev:TerminationTime>{_expiry_str(expiry)}</tev:TerminationTime>'
+        f'{events_xml}'
+        f'</tev:PullMessagesResponse>'
+    )
+
+
+def _Renew(body):
+    token = _subscription_token_from_path()
+    ts = _utcnow()
+    new_expiry = time.time() + 3600
+    if token:
+        with _subs_lock:
+            sub = _subscriptions.get(token)
+            if sub:
+                sub["expiry"] = new_expiry
+    return ok(
+        f'<wsnt:RenewResponse xmlns:wsnt="http://docs.oasis-open.org/wsn/b-2">'
+        f'<wsnt:CurrentTime>{ts}</wsnt:CurrentTime>'
+        f'<wsnt:TerminationTime>{_expiry_str(new_expiry)}</wsnt:TerminationTime>'
+        f'</wsnt:RenewResponse>'
+    )
+
+
+def _Unsubscribe(body):
+    token = _subscription_token_from_path()
+    if token:
+        with _subs_lock:
+            _subscriptions.pop(token, None)
+    return ok('<wsnt:UnsubscribeResponse xmlns:wsnt="http://docs.oasis-open.org/wsn/b-2"/>')
+
 
 # ── Media service handlers ───────────────────────────────────────────────────
 _VS_CONF = (
@@ -351,6 +590,12 @@ _ACTIONS = {
     "GetDNS":                                (_GetDNS,                               True),
     "GetUsers":                              (_GetUsers,                             True),
     "SystemReboot":                          (_SystemReboot,                         True),
+    # Event service
+    "GetEventProperties":                    (_GetEventProperties,                   True),
+    "CreatePullPointSubscription":           (_CreatePullPointSubscription,          True),
+    "PullMessages":                          (_PullMessages,                         True),
+    "Renew":                                 (_Renew,                                True),
+    "Unsubscribe":                           (_Unsubscribe,                          True),
     # Media service
     "GetProfiles":                           (_GetProfiles,                          True),
     "GetProfile":                            (_GetProfile,                           True),
@@ -369,6 +614,8 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, *_): pass
 
     def do_POST(self):
+        _request_ctx.path = self.path
+
         length = int(self.headers.get("Content-Length", 0))
         body   = self.rfile.read(length).decode("utf-8", errors="ignore")
 
@@ -475,5 +722,6 @@ def _wsd_loop():
 
 if __name__ == "__main__":
     threading.Thread(target=_wsd_loop, daemon=True).start()
+    threading.Thread(target=_motion_detector_loop, daemon=True).start()
     log.info("ONVIF HTTP service on port %d, device UUID %s", ONVIF_PORT, DEVICE_UUID)
     HTTPServer(("0.0.0.0", ONVIF_PORT), _Handler).serve_forever()
